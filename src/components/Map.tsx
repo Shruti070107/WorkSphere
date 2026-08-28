@@ -1,7 +1,7 @@
 "use client";
 
 import { useUser, useAuth } from "@clerk/nextjs";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, memo } from "react";
 import { useTheme } from "./ThemeProvider";
 import {
   MapContainer,
@@ -254,14 +254,14 @@ const createCursorIcon = (avatarUrl: string, name: string) => {
   if (avatarUrl && avatarUrl !== "default" && avatarUrl.startsWith("http")) {
     html = `
       <div class="map-cursor-container">
-        <div class="map-cursor-avatar" style="background-image: url(${avatarUrl})"></div>
+        <div class="map-cursor-avatar" style="background-image: url(${avatarUrl})" width="32" height="32"></div>
         <div class="map-cursor-label">${name}</div>
       </div>
     `;
   } else {
     html = `
       <div class="map-cursor-container">
-        <div class="map-cursor-avatar-default"></div>
+        <div class="map-cursor-avatar-default" width="16" height="16"></div>
         <div class="map-cursor-label">${name}</div>
       </div>
     `;
@@ -317,6 +317,25 @@ function WebGLContextWatcher() {
 
   return null;
 }
+
+const MemoizedCursorMarker = memo(function MemoizedCursorMarker({
+  userId,
+  cursor,
+}: {
+  userId: string;
+  cursor: { lat: number; lng: number; name: string; avatar: string };
+}) {
+  const presenceIcon = createCursorIcon(cursor.avatar, cursor.name);
+  if (!presenceIcon) return null;
+  return (
+    <Marker
+      key={`presence-${userId}`}
+      position={[cursor.lat, cursor.lng]}
+      icon={presenceIcon}
+      interactive={false}
+    />
+  );
+});
 
 const Map = ({
   location,
@@ -546,6 +565,7 @@ const Map = ({
   const [travelProfile, setTravelProfile] = useState<
     "walking" | "cycling" | "driving"
   >("walking");
+  const [selectedMarkerId, setSelectedMarkerId] = useState<string | null>(null);
 
   // OSRM Multi-Stop coordinate solver engine
   const calculateOptimizedRoute = async (venuesList = routingQueue) => {
@@ -769,9 +789,9 @@ const Map = ({
     let html: string;
 
     if (iconUrl && iconUrl !== "default") {
-      html = `<div class="image-marker" style="background-image: url(${iconUrl})"></div>`;
+      html = `<div class="image-marker" style="background-image: url(${iconUrl})" width="40" height="40"></div>`;
     } else {
-      html = `<div class="default-dot-marker"></div>`;
+      html = `<div class="default-dot-marker" width="20" height="20"></div>`;
     }
 
     return L.divIcon({
@@ -781,6 +801,29 @@ const Map = ({
       iconAnchor: [20, 20],
     });
   }, [iconUrl]);
+
+  // Memoize the rendered CircleMarker JSX to prevent unnecessary SVG re-renders
+  // and micro-flickering on every Map.tsx update (e.g. cursor socket events)
+  const memoizedSeatRings = useMemo(() => {
+    return spiderfiedMarkers
+      .filter((marker) => !marker.id.includes("dest"))
+      .map((marker) => {
+        const seat = getAvailability(marker.id);
+        return (
+          <CircleMarker
+            key={`seat-ring-${marker.id}`}
+            center={[marker.renderedLat, marker.renderedLng]}
+            radius={16}
+            pathOptions={{
+              color: SEAT_RING_COLORS[seat.status],
+              weight: 3,
+              opacity: 0.9,
+              fillOpacity: 0,
+            }}
+          />
+        );
+      });
+  }, [spiderfiedMarkers, getAvailability]);
 
   const center: [number, number] = [latitude, longitude];
   const tileUrl =
@@ -828,6 +871,8 @@ const Map = ({
           width: 100%;
           height: 100%;
           border-radius: 12px;
+          position: relative;
+          z-index: 20;
         }
         
         /* UPDATED: Target map tiles specifically so they don't hide the heatmap canvas */
@@ -1026,11 +1071,13 @@ const Map = ({
         zoom={13}
         maxZoom={18}
         preferCanvas={true}
+        className="z-20 relative"
         style={{
           width: "95%",
           height: "95%",
           borderRadius: "12px",
           position: "relative",
+          zIndex: 20,
         }}
       >
         <ScaleControl position="bottomleft" metric={true} imperial={false} />
@@ -1096,26 +1143,7 @@ const Map = ({
           </LayersControl.Overlay>
 
           <LayersControl.Overlay name="Seat Availability">
-            <LayerGroup>
-              {spiderfiedMarkers
-                .filter((marker) => !marker.id.includes("dest"))
-                .map((marker) => {
-                  const seat = getAvailability(marker.id);
-                  return (
-                    <CircleMarker
-                      key={`seat-ring-${marker.id}`}
-                      center={[marker.renderedLat, marker.renderedLng]}
-                      radius={16}
-                      pathOptions={{
-                        color: SEAT_RING_COLORS[seat.status],
-                        weight: 3,
-                        opacity: 0.9,
-                        fillOpacity: 0,
-                      }}
-                    />
-                  );
-                })}
-            </LayerGroup>
+            <LayerGroup>{memoizedSeatRings}</LayerGroup>
           </LayersControl.Overlay>
         </LayersControl>
 
@@ -1124,6 +1152,7 @@ const Map = ({
         <ZoomWatcher
           onZoomSettled={handleZoomSettled}
           onZoomStart={handleZoomStart}
+          delay={250}
         />
         <ResizeWatcher />
         <WebGLContextWatcher />
@@ -1138,95 +1167,101 @@ const Map = ({
           </AccessibleMarker>
         )}
         <MapEvents onMouseMove={throttledBroadcast} />
-        {Object.entries(mapCursors).map(([userId, cursor]) => {
-          const presenceIcon = createCursorIcon(cursor.avatar, cursor.name);
-          if (!presenceIcon) return null;
+        {Object.entries(mapCursors).map(([userId, cursor]) => (
+          <MemoizedCursorMarker key={userId} userId={userId} cursor={cursor} />
+        ))}
+        {spiderfiedMarkers.map((marker) => {
+          const isDest = marker.id.includes("dest");
+          const seat = !isDest ? getAvailability(marker.id) : null;
+          const isCheckedInHere = !isDest && checkedInVenueId === marker.id;
+          const telemetry = !isDest
+            ? {
+                seatCount: seat?.count,
+                seatCapacity: seat?.capacity,
+                isCheckedIn: isCheckedInHere,
+                isConnected: isSeatSocketConnected,
+              }
+            : undefined;
+
           return (
-            <Marker
-              key={`presence-${userId}`}
-              position={[cursor.lat, cursor.lng]}
-              icon={presenceIcon}
-              interactive={false}
-            />
+            <AccessibleMarker
+              key={marker.id}
+              position={[marker.renderedLat, marker.renderedLng]}
+              icon={isDest ? destinationIcon : venueIcon}
+              name={marker.name}
+              category={marker.category}
+              isDestination={isDest}
+              telemetryData={telemetry}
+              zIndexOffset={selectedMarkerId === marker.id ? 1000 : 0}
+              onClick={() => setSelectedMarkerId(marker.id)}
+            >
+              <div className="text-sm">
+                <div className="font-semibold text-white">{marker.name}</div>
+                {marker.category && (
+                  <div className="text-zinc-400">{marker.category}</div>
+                )}
+                {marker.address && (
+                  <div className="text-zinc-500 text-xs mt-1">
+                    {marker.address}
+                  </div>
+                )}
+                {!isDest &&
+                  (() => {
+                    const seatTextColor =
+                      seat!.status === "red"
+                        ? "text-red-400"
+                        : seat!.status === "yellow"
+                          ? "text-yellow-400"
+                          : "text-green-400";
+                    return (
+                      <div className="mt-2 flex items-center justify-between gap-2 border-t border-zinc-800 pt-2">
+                        <span
+                          className={`text-[10px] font-medium ${seatTextColor}`}
+                        >
+                          {isSeatSocketConnected
+                            ? `${seat!.count}/${seat!.capacity} checked in`
+                            : "Connecting…"}
+                        </span>
+                        <button
+                          onClick={() =>
+                            isCheckedInHere ? checkOut() : checkIn(marker.id)
+                          }
+                          className={`rounded px-2 py-1 text-[10px] font-medium transition-colors ${
+                            isCheckedInHere
+                              ? "accent-bg text-white hover:opacity-90"
+                              : "bg-zinc-800 text-zinc-200 hover:accent-bg hover:text-white"
+                          }`}
+                        >
+                          {isCheckedInHere ? "Check out" : "Check in here"}
+                        </button>
+                      </div>
+                    );
+                  })()}
+              </div>
+              <button
+                onClick={() => {
+                  // Prevent duplicates in queue chain matrix
+                  if (!routingQueue.some((v) => v.id === marker.id)) {
+                    const updated = [
+                      ...routingQueue,
+                      {
+                        id: marker.id,
+                        name: marker.name,
+                        latitude: Number(marker.position.lat),
+                        longitude: Number(marker.position.lng),
+                      },
+                    ];
+                    setRoutingQueue(updated);
+                    calculateOptimizedRoute(updated);
+                  }
+                }}
+                className="mt-2 w-full rounded bg-zinc-800 py-1 text-[10px] font-medium text-zinc-200 hover:accent-bg hover:text-white transition-colors"
+              >
+                ➕ Add to Workday Timeline
+              </button>
+            </AccessibleMarker>
           );
         })}
-        {spiderfiedMarkers.map((marker) => (
-          <AccessibleMarker
-            key={marker.id}
-            position={[marker.renderedLat, marker.renderedLng]}
-            icon={marker.id.includes("dest") ? destinationIcon : venueIcon}
-            name={marker.name}
-            category={marker.category}
-            isDestination={marker.id.includes("dest")}
-          >
-            <div className="text-sm">
-              <div className="font-semibold text-white">{marker.name}</div>
-              {marker.category && (
-                <div className="text-zinc-400">{marker.category}</div>
-              )}
-              {marker.address && (
-                <div className="text-zinc-500 text-xs mt-1">
-                  {marker.address}
-                </div>
-              )}
-              {!marker.id.includes("dest") &&
-                (() => {
-                  const seat = getAvailability(marker.id);
-                  const isCheckedInHere = checkedInVenueId === marker.id;
-                  const seatTextColor =
-                    seat.status === "red"
-                      ? "text-red-400"
-                      : seat.status === "yellow"
-                        ? "text-yellow-400"
-                        : "text-green-400";
-                  return (
-                    <div className="mt-2 flex items-center justify-between gap-2 border-t border-zinc-800 pt-2">
-                      <span
-                        className={`text-[10px] font-medium ${seatTextColor}`}
-                      >
-                        {isSeatSocketConnected
-                          ? `${seat.count}/${seat.capacity} checked in`
-                          : "Connecting…"}
-                      </span>
-                      <button
-                        onClick={() =>
-                          isCheckedInHere ? checkOut() : checkIn(marker.id)
-                        }
-                        className={`rounded px-2 py-1 text-[10px] font-medium transition-colors ${
-                          isCheckedInHere
-                            ? "accent-bg text-white hover:opacity-90"
-                            : "bg-zinc-800 text-zinc-200 hover:accent-bg hover:text-white"
-                        }`}
-                      >
-                        {isCheckedInHere ? "Check out" : "Check in here"}
-                      </button>
-                    </div>
-                  );
-                })()}
-            </div>
-            <button
-              onClick={() => {
-                // Prevent duplicates in queue chain matrix
-                if (!routingQueue.some((v) => v.id === marker.id)) {
-                  const updated = [
-                    ...routingQueue,
-                    {
-                      id: marker.id,
-                      name: marker.name,
-                      latitude: Number(marker.position.lat),
-                      longitude: Number(marker.position.lng),
-                    },
-                  ];
-                  setRoutingQueue(updated);
-                  calculateOptimizedRoute(updated);
-                }
-              }}
-              className="mt-2 w-full rounded bg-zinc-800 py-1 text-[10px] font-medium text-zinc-200 hover:accent-bg hover:text-white transition-colors"
-            >
-              ➕ Add to Workday Timeline
-            </button>
-          </AccessibleMarker>
-        ))}
 
         {/* Render OSRM Optimized Multi-Stop Routing Layer Geometry */}
         {optimizedRoute &&
@@ -1244,6 +1279,7 @@ const Map = ({
               }}
             >
               <Popup
+                autoPanPadding={[20, 20]}
                 autoPanPaddingTopLeft={[20, 90]}
                 autoPanPaddingBottomRight={[20, 20]}
               >
@@ -1291,7 +1327,7 @@ const Map = ({
               }}
             >
               {route.distance && (
-                <Popup>
+                <Popup autoPanPadding={[20, 20]}>
                   <div className="text-sm">
                     Distance: {(route.distance / 1000).toFixed(1)} km
                     {route.duration && (

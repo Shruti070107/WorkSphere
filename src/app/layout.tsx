@@ -9,11 +9,14 @@ import I18nProvider from "../components/I18nProvider";
 import { ThemeProvider } from "../components/ThemeProvider";
 import { SoundProvider } from "../components/SoundProvider";
 import { ScrollProgress } from "../components/ui/ScrollProgress";
+import { ScrollToTopButton } from "../components/ui/ScrollToTopButton";
 import { CookieBanner } from "../components/CookieBanner";
 import { CurrencyProvider } from "@/context/CurrencyContext";
 import { SyncManager } from "../hooks/usePWA";
 import { ToastProvider } from "../components/ui/Toast";
 import { PWAUpdateListener } from "../components/PWAUpdateListener";
+import { KeyboardShortcutsModal } from "../components/KeyboardShortcutsModal";
+import { CommandPalette } from "../components/CommandPalette";
 
 const THEME_INIT_SCRIPT = `
 (function () {
@@ -162,6 +165,8 @@ export default async function RootLayout({
         <ToastProvider>
           <CurrencyProvider>
             <PWAUpdateListener />
+            <KeyboardShortcutsModal />
+            <CommandPalette />
             <I18nProvider>{children}</I18nProvider>
           </CurrencyProvider>
         </ToastProvider>
@@ -196,6 +201,7 @@ export default async function RootLayout({
       <head>
         <script
           id="theme-init"
+          suppressHydrationWarning
           nonce={nonce}
           dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }}
         />
@@ -209,6 +215,7 @@ export default async function RootLayout({
         suppressHydrationWarning
       >
         <ScrollProgress />
+        <ScrollToTopButton />
         <SyncManager />
         {bodyContent}
         <CookieBanner />

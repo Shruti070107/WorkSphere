@@ -8,10 +8,40 @@ import "@/core/subscribers/discord";
 import "@/core/subscribers/whatsapp";
 import "@/core/subscribers/guests";
 import "@/core/subscribers/telegram";
+import { rateLimit, getRateLimitInfo } from "@/lib/rateLimit";
 
 export async function POST(req: Request) {
   try {
     const { userId } = await auth();
+    const forwarded = req.headers.get("x-forwarded-for");
+    const identifier = `book:${userId || forwarded?.split(",")[0] || "anonymous"}`;
+
+    if (!(await rateLimit(identifier, 5))) {
+      const info = await getRateLimitInfo(identifier, 5);
+      const retryAfter = info?.resetTime
+        ? Math.ceil((info.resetTime - Date.now()) / 1000)
+        : 60;
+      const resetTimeSec = info?.resetTime
+        ? Math.ceil(info.resetTime / 1000)
+        : Math.ceil((Date.now() + 60000) / 1000);
+
+      return NextResponse.json(
+        {
+          error:
+            "Rate limit exceeded. Please wait before making more bookings.",
+          retryAfterSeconds: retryAfter,
+          retryAfter,
+        },
+        {
+          status: 429,
+          headers: {
+            "Retry-After": String(retryAfter),
+            "X-RateLimit-Reset": String(resetTimeSec),
+          },
+        },
+      );
+    }
+
     if (!userId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
@@ -107,7 +137,7 @@ export async function POST(req: Request) {
 
     // 2. Emit Booking Confirmed Event to handle Side-Effects (PDF, Email, Analytics)
     // --- ASYNC PDF FIX IMPLEMENTATION (#518) ---
-    after(async () => {
+    const runBackground = async () => {
       try {
         for (const booking of bookings) {
           await eventBus.emit("booking:confirmed", {
@@ -127,7 +157,13 @@ export async function POST(req: Request) {
       } catch (backgroundError) {
         console.error("[Background Event Bus Error]:", backgroundError);
       }
-    });
+    };
+
+    try {
+      after(runBackground);
+    } catch {
+      void runBackground();
+    }
     // --- END OF ASYNC PDF FIX ---
 
     return NextResponse.json({
@@ -139,14 +175,11 @@ export async function POST(req: Request) {
   } catch (error: any) {
     console.error("[Booking API Critical Failure]:", error);
 
-    // Catch standard Prisma unique constraint violations (P2002) cleanly
     if (error.code === "P2002" || error.message?.includes("COLLISION")) {
       return NextResponse.json(
         {
           success: false,
-          error:
-            "Reservation collision intercepted. Please try selecting another slot.",
-          details: error.message,
+          error: "This time slot was just booked. Please select another.",
         },
         { status: 409 },
       );
@@ -155,8 +188,7 @@ export async function POST(req: Request) {
     return NextResponse.json(
       {
         success: false,
-        error: "Internal systems error during confirmation",
-        details: error.message || String(error),
+        error: "Confirmation failed. Please try again.",
       },
       { status: 500 },
     );

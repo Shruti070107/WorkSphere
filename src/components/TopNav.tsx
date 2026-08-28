@@ -1,13 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useUser } from "@clerk/nextjs";
 import { ReactiveUserButton } from "@/components/ReactiveUserButton";
 import { Coffee, LayoutGrid, Menu, Shield, X } from "lucide-react";
 import Image from "next/image";
 import { ThemeToggle } from "@/components/ThemeToggle";
+
 import { NotificationBell } from "@/components/NotificationBell";
+import { StreakBadge } from "@/components/Header/StreakBadge";
+import { OfflineSyncProgressBar } from "@/components/OfflineSyncProgressBar";
 
 interface TopNavProps {
   hideAuth?: boolean;
@@ -15,14 +18,44 @@ interface TopNavProps {
 
 export function TopNav({ hideAuth = false }: TopNavProps) {
   const { isSignedIn } = useUser();
+
   console.log({
     hideAuth,
     isSignedIn,
   });
   const [isMenuOpen, setIsMenuOpen] = useState(false);
 
+  useEffect(() => {
+    if (isMenuOpen) {
+      document.body.style.overflow = "hidden";
+    } else {
+      document.body.style.overflow = "";
+    }
+
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setIsMenuOpen(false);
+    };
+
+    const handleResize = () => {
+      if (window.innerWidth >= 768 && isMenuOpen) {
+        setIsMenuOpen(false);
+      }
+    };
+
+    if (isMenuOpen) {
+      document.addEventListener("keydown", handleEscape);
+      window.addEventListener("resize", handleResize);
+    }
+
+    return () => {
+      document.body.style.overflow = "";
+      document.removeEventListener("keydown", handleEscape);
+      window.removeEventListener("resize", handleResize);
+    };
+  }, [isMenuOpen]);
+
   return (
-    <nav className="sticky top-0 z-50 border-b border-zinc-200/80 dark:border-white/5 backdrop-blur-xl bg-white/70 dark:bg-black/40 transition-colors">
+    <nav className="sticky top-0 z-40 border-b border-zinc-200/80 dark:border-white/5 backdrop-blur-xl bg-white/70 dark:bg-black/40 transition-colors">
       <div className="container mx-auto px-6 sm:px-10 h-[72px] flex items-center justify-between">
         <Link href="/" className="flex items-center gap-2.5 group">
           <Image
@@ -65,7 +98,7 @@ export function TopNav({ hideAuth = false }: TopNavProps) {
 
                   {/* Mobile */}
                   <button
-                    onClick={() => setIsMenuOpen(!isMenuOpen)}
+                    onClick={() => setIsMenuOpen((prev) => !prev)}
                     className="md:hidden p-2 rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-800"
                   >
                     {isMenuOpen ? (
@@ -79,7 +112,7 @@ export function TopNav({ hideAuth = false }: TopNavProps) {
                 <>
                   {/* Mobile Menu Button */}
                   <button
-                    onClick={() => setIsMenuOpen(!isMenuOpen)}
+                    onClick={() => setIsMenuOpen((prev) => !prev)}
                     className="md:hidden p-2 rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-800"
                     aria-label="Toggle navigation menu"
                   >
@@ -113,6 +146,7 @@ export function TopNav({ hideAuth = false }: TopNavProps) {
                     <Shield className="w-4 h-4" />
                     Admin
                   </Link>
+                  <StreakBadge />
                   <NotificationBell />
                   <div className="flex items-center justify-center w-8 h-8 rounded-full overflow-hidden shrink-0 ml-1">
                     <ReactiveUserButton
@@ -131,13 +165,13 @@ export function TopNav({ hideAuth = false }: TopNavProps) {
         <>
           {/* Backdrop Overlay */}
           <div
-            className="fixed inset-0 bg-black/60 backdrop-blur-sm md:hidden z-40"
+            className="fixed inset-0 top-[72px] bg-black/60 backdrop-blur-sm md:hidden z-40"
             onClick={() => setIsMenuOpen(false)}
             aria-hidden="true"
           />
 
           {/* Mobile Menu Drawer */}
-          <div className="md:hidden border-t bg-white dark:bg-black relative z-50">
+          <div className="md:hidden border-t bg-white dark:bg-black absolute top-full left-0 w-full z-50">
             <div className="flex flex-col p-4 gap-3">
               {!isSignedIn ? (
                 <>
@@ -167,6 +201,7 @@ export function TopNav({ hideAuth = false }: TopNavProps) {
           </div>
         </>
       )}
+      <OfflineSyncProgressBar />
     </nav>
   );
 }

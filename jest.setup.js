@@ -1,6 +1,15 @@
 require("@testing-library/jest-dom");
 const { TextEncoder, TextDecoder } = require("util");
 const { webcrypto } = require("crypto");
+
+// Mock import.meta for Jest CommonJS environment
+if (typeof globalThis !== "undefined") {
+  Object.defineProperty(globalThis, "import.meta", {
+    value: { url: "file:///" },
+    configurable: true,
+    writable: true,
+  });
+}
 // jsdom doesn't provide these globals; Node's implementations are drop-in
 // replacements and let us test Edge-runtime-style code (e.g. src/lib/csrf.ts)
 // under the standard jsdom test environment.
@@ -9,47 +18,70 @@ if (typeof global.TextEncoder === "undefined") {
   global.TextDecoder = TextDecoder;
 }
 
+
 const { ReadableStream, TransformStream, WritableStream } = require("stream/web");
+
 if (typeof global.ReadableStream === "undefined") {
   global.ReadableStream = ReadableStream;
 }
 if (typeof global.TransformStream === "undefined") {
   global.TransformStream = TransformStream;
 }
+const { MessageChannel, MessagePort } = require("worker_threads");
+if (typeof global.MessageChannel === "undefined") {
+  global.MessageChannel = MessageChannel;
+}
+if (typeof global.MessagePort === "undefined") {
+  global.MessagePort = MessagePort;
+}
+
+
+
 if (typeof global.WritableStream === "undefined") {
   global.WritableStream = WritableStream;
 }
 
-const { MessageChannel, MessagePort } = require("worker_threads");
 if (typeof global.MessageChannel === "undefined") {
   global.MessageChannel = MessageChannel;
   global.MessagePort = MessagePort;
 }
+// Node 18+ already provides Request/Response/Headers/FormData/File as
+// globals (backed by its own bundled fetch implementation), so this is only
+// reached on a runtime that predates them. Requiring the standalone `undici`
+// package unconditionally breaks on Node versions older than it supports
+// (it needs >=22.19) even though its exports are never actually used there.
+if (
+  typeof global.Request === "undefined" ||
+  typeof global.Response === "undefined" ||
+  typeof global.Headers === "undefined" ||
+  typeof global.FormData === "undefined" ||
+  typeof global.File === "undefined"
+) {
+  /* eslint-disable @typescript-eslint/no-require-imports */
+  const {
+    Request: UndiciRequest,
+    Response: UndiciResponse,
+    Headers: UndiciHeaders,
+    FormData: UndiciFormData,
+    File: UndiciFile,
+  } = require("undici");
+  /* eslint-enable @typescript-eslint/no-require-imports */
 
-/* eslint-disable @typescript-eslint/no-require-imports */
-const {
-  Request: UndiciRequest,
-  Response: UndiciResponse,
-  Headers: UndiciHeaders,
-  FormData: UndiciFormData,
-  File: UndiciFile,
-} = require("undici");
-/* eslint-enable @typescript-eslint/no-require-imports */
-
-if (typeof global.Request === "undefined") {
-  global.Request = UndiciRequest;
-}
-if (typeof global.Response === "undefined") {
-  global.Response = UndiciResponse;
-}
-if (typeof global.Headers === "undefined") {
-  global.Headers = UndiciHeaders;
-}
-if (typeof global.FormData === "undefined") {
-  global.FormData = UndiciFormData;
-}
-if (typeof global.File === "undefined") {
-  global.File = UndiciFile;
+  if (typeof global.Request === "undefined") {
+    global.Request = UndiciRequest;
+  }
+  if (typeof global.Response === "undefined") {
+    global.Response = UndiciResponse;
+  }
+  if (typeof global.Headers === "undefined") {
+    global.Headers = UndiciHeaders;
+  }
+  if (typeof global.FormData === "undefined") {
+    global.FormData = UndiciFormData;
+  }
+  if (typeof global.File === "undefined") {
+    global.File = UndiciFile;
+  }
 }
 if (typeof global.crypto === "undefined" || !global.crypto.subtle) {
   Object.defineProperty(global, "crypto", {
@@ -198,4 +230,30 @@ global.IntersectionObserver = class IntersectionObserver {
   unobserve() {}
   disconnect() {}
 };
+
+// Mock Audio for JSDOM testing environment
+if (typeof global.window !== "undefined") {
+  global.window.Audio = class {
+    constructor() {}
+    play() {
+      return Promise.resolve();
+    }
+    pause() {}
+    load() {}
+  };
+
+  Object.defineProperty(global.window.CSSStyleDeclaration.prototype, "scrollbarGutter", {
+    writable: true,
+    value: "",
+  });
+
+  const originalGetComputedStyle = global.window.getComputedStyle;
+  global.window.getComputedStyle = function (elt, ...args) {
+    const style = originalGetComputedStyle.call(this, elt, ...args);
+    if (elt.style && elt.style.scrollbarGutter) {
+      style.scrollbarGutter = elt.style.scrollbarGutter;
+    }
+    return style;
+  };
+}
 

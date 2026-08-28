@@ -58,6 +58,19 @@ model User {
   lastCheckInDate    String? // stored as "YYYY-MM-DD" UTC
   passkeys           PasskeyCredential[]
   isVerifiedStudent  Boolean            @default(false)
+  accurateVotes      Int                @default(0)
+  badges             UserBadge[]
+}
+
+model UserBadge {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  badgeType String
+  awardedAt DateTime @default(now())
+
+  @@unique([userId, badgeType])
+  @@index([userId])
 }
 
 model Venue {
@@ -119,6 +132,10 @@ model Venue {
   maxCapacity         Int                 @default(50)
   checkIns            CheckIn[]
   xrAnchors           XRAnchor[]
+  isClaimed           Boolean             @default(false)
+  ownerId             String?
+  hostMessage         String?
+  openingHours        String?
 
   @@index([latitude, longitude])
   @@index([category])
@@ -267,6 +284,8 @@ enum GuestStatus {
   SENT
   FAILED
   CANCELLED
+  ACCEPTED
+  DECLINED
 }
 
 enum BookingStatus {
@@ -495,6 +514,7 @@ model Folder {
   id          String   @id @default(cuid())
   name        String
   description String?
+  color       String?  @default("#3b82f6")
   ownerId     String
   owner       User     @relation("FolderOwner", fields: [ownerId], references: [id], onDelete: Cascade)
   inviteToken String?  @unique
@@ -507,8 +527,21 @@ model Folder {
   members    FolderMember[]
   upvoteRefs FolderUpvote[]
   invites    FolderInvite[]
+  shortLinks ShortLink[]
 
   @@index([ownerId])
+}
+
+model ShortLink {
+  id        String    @id @default(cuid())
+  shortCode String    @unique
+  folderId  String
+  folder    Folder    @relation(fields: [folderId], references: [id], onDelete: Cascade)
+  expiresAt DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([folderId])
+  @@index([shortCode])
 }
 
 model FolderVenue {
@@ -724,4 +757,4 @@ model FoodVote {
 
   @@unique([userId, validationId])
 }
-
+

@@ -13,6 +13,8 @@ import {
   WebGPUFloorPlanRenderer,
   type FloorPlanData,
 } from "@/lib/webgpu/floorPlanRenderer";
+import { allocateCanvasDrawingBuffer } from "@/lib/webgl/canvasBufferSize";
+import { attachWebGLContextRecovery } from "@/lib/webgl/contextManager";
 
 interface FloorPlan3DProps {
   venueId: string;
@@ -31,18 +33,53 @@ export function FloorPlan3D({ venueId: _venueId, data }: FloorPlan3DProps) {
     const canvas = canvasRef.current;
     const renderer = new WebGPUFloorPlanRenderer(canvas);
     rendererRef.current = renderer;
+    let detachRecovery: (() => void) | null = null;
+    let fallbackCleanup: (() => void) | null = null;
+    let worker: Worker | null = null;
+    let isUnmounted = false;
 
     renderer.initialize().then((success) => {
-      if (success) {
-        setUseWebGPU(true);
-        renderer.loadFloorPlan(data);
-        renderer.startRenderLoop();
-      } else {
-        renderWebGLFallback(canvas, data);
-      }
+      if (isUnmounted) return;
+
+      worker = new Worker(
+        new URL("../../../workers/layoutWorker.ts", import.meta.url),
+      );
+
+      worker.onmessage = (event) => {
+        if (isUnmounted) return;
+        if (event.data.type === "LAYOUT_COMPLETE") {
+          const { webgpu, webgl } = event.data;
+
+          if (success) {
+            setUseWebGPU(true);
+            renderer.loadFloorPlanMesh(webgpu);
+            if (typeof renderer.startRenderLoop === "function") {
+              renderer.startRenderLoop();
+            }
+          } else {
+            fallbackCleanup = renderWebGLFallback(canvas, data, webgl);
+            detachRecovery = attachWebGLContextRecovery(canvas, () => {
+              if (!isUnmounted) {
+                fallbackCleanup?.();
+                fallbackCleanup = renderWebGLFallback(canvas, data, webgl);
+              }
+            });
+          }
+        }
+      };
+
+      worker.postMessage({
+        type: "CALCULATE_LAYOUT",
+        data,
+      });
     });
 
     return () => {
+      isUnmounted = true;
+      worker?.terminate();
+      detachRecovery?.();
+      fallbackCleanup?.();
+      renderer.stopRenderLoop();
       renderer.destroy();
     };
   }, [data]);
@@ -184,22 +221,22 @@ export function FloorPlan3D({ venueId: _venueId, data }: FloorPlan3DProps) {
                   })`,
                 }}
               />
-              <span className="text-[9px] text-zinc-400">{label}</span>
+              <span className="text-[9px] text-zinc-200">{label}</span>
             </div>
           ))}
           <div className="flex items-center gap-1.5">
             <Power className="w-2.5 h-2.5 text-yellow-400" />
-            <span className="text-[9px] text-zinc-400">Power Outlet</span>
+            <span className="text-[9px] text-zinc-200">Power Outlet</span>
           </div>
         </div>
 
         {/* Stats overlay */}
         <div className="absolute top-3 right-3 bg-zinc-900/90 backdrop-blur-sm rounded-lg p-2 space-y-1">
-          <p className="text-[9px] text-zinc-400">
+          <p className="text-[9px] text-zinc-200">
             <span className="text-white font-bold">{powerSeats}</span> seats
             with power
           </p>
-          <p className="text-[9px] text-zinc-400">
+          <p className="text-[9px] text-zinc-200">
             <span className="text-white font-bold">{quietSeats}</span> quiet
             zone seats
           </p>
@@ -207,7 +244,7 @@ export function FloorPlan3D({ venueId: _venueId, data }: FloorPlan3DProps) {
       </div>
 
       <div className="p-3 text-center">
-        <p className="text-[10px] text-zinc-400">
+        <p className="text-[10px] text-zinc-200">
           Drag to rotate • Scroll to zoom •{" "}
           {useWebGPU
             ? "Hardware-accelerated via WebGPU"
@@ -221,9 +258,18 @@ export function FloorPlan3D({ venueId: _venueId, data }: FloorPlan3DProps) {
 function renderWebGLFallback(
   canvas: HTMLCanvasElement,
   data: FloorPlanData,
-): void {
+  meshData?: { positions: Float32Array; colors: Float32Array },
+): () => void {
   const gl = canvas.getContext("webgl2");
-  if (!gl) return;
+  if (!gl) return () => {};
+
+  // CSS size × devicePixelRatio so Retina restores are sharp (#1030)
+  const { width, height } = allocateCanvasDrawingBuffer(
+    canvas,
+    canvas.clientWidth || 800,
+    canvas.clientHeight || 450,
+  );
+  gl.viewport(0, 0, width, height);
 
   gl.clearColor(0.08, 0.08, 0.1, 1.0);
   gl.enable(gl.DEPTH_TEST);
@@ -265,62 +311,73 @@ function renderWebGLFallback(
 
   const vs = compileShader(gl, gl.VERTEX_SHADER, vertexSource);
   const fs = compileShader(gl, gl.FRAGMENT_SHADER, fragmentSource);
-  if (!vs || !fs) return;
+  if (!vs || !fs) return () => {};
 
   const program = gl.createProgram();
-  if (!program) return;
+  if (!program) return () => {};
   gl.attachShader(program, vs);
   gl.attachShader(program, fs);
   gl.linkProgram(program);
 
   if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-    return;
+    return () => {};
   }
 
   gl.useProgram(program);
 
   // Build geometry
-  const positions: number[] = [];
-  const colors: number[] = [];
-  const hw = data.width / 2;
-  const hd = data.depth / 2;
+  let positionsArray: Float32Array;
+  let colorsArray: Float32Array;
 
-  // Floor
-  const fc = [0.15, 0.15, 0.18];
-  positions.push(-hw, 0, -hd, hw, 0, -hd, hw, 0, hd);
-  positions.push(-hw, 0, -hd, hw, 0, hd, -hw, 0, hd);
-  for (let i = 0; i < 6; i++) colors.push(...fc);
+  if (meshData) {
+    positionsArray = meshData.positions;
+    colorsArray = meshData.colors;
+  } else {
+    const positions: number[] = [];
+    const colors: number[] = [];
+    const hw = data.width / 2;
+    const hd = data.depth / 2;
 
-  // Seats
-  for (const seat of data.seats) {
-    const c =
-      seat.type === "hot_desk"
-        ? [0.2, 0.6, 0.9]
-        : seat.type === "fixed_desk"
-          ? [0.3, 0.8, 0.4]
-          : seat.type === "meeting_room"
-            ? [0.8, 0.5, 0.2]
-            : [0.7, 0.3, 0.7];
-    const s = 0.3;
-    const y = 0.4;
-    const x = seat.x;
-    const z = seat.z;
-    // Simple quad
-    positions.push(x - s, y, z - s, x + s, y, z - s, x + s, y, z + s);
-    positions.push(x - s, y, z - s, x + s, y, z + s, x - s, y, z + s);
-    for (let i = 0; i < 6; i++) colors.push(...c);
+    // Floor
+    const fc = [0.15, 0.15, 0.18];
+    positions.push(-hw, 0, -hd, hw, 0, -hd, hw, 0, hd);
+    positions.push(-hw, 0, -hd, hw, 0, hd, -hw, 0, hd);
+    for (let i = 0; i < 6; i++) colors.push(...fc);
+
+    // Seats
+    for (const seat of data.seats) {
+      const c =
+        seat.type === "hot_desk"
+          ? [0.2, 0.6, 0.9]
+          : seat.type === "fixed_desk"
+            ? [0.3, 0.8, 0.4]
+            : seat.type === "meeting_room"
+              ? [0.8, 0.5, 0.2]
+              : [0.7, 0.3, 0.7];
+      const s = 0.3;
+      const y = 0.4;
+      const x = seat.x;
+      const z = seat.z;
+      // Simple quad
+      positions.push(x - s, y, z - s, x + s, y, z - s, x + s, y, z + s);
+      positions.push(x - s, y, z - s, x + s, y, z + s, x - s, y, z + s);
+      for (let i = 0; i < 6; i++) colors.push(...c);
+    }
+
+    positionsArray = new Float32Array(positions);
+    colorsArray = new Float32Array(colors);
   }
 
   const posBuf = gl.createBuffer();
   gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
-  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(positions), gl.STATIC_DRAW);
+  gl.bufferData(gl.ARRAY_BUFFER, positionsArray, gl.STATIC_DRAW);
   const aPos = gl.getAttribLocation(program, "aPosition");
   gl.enableVertexAttribArray(aPos);
   gl.vertexAttribPointer(aPos, 3, gl.FLOAT, false, 0, 0);
 
   const colBuf = gl.createBuffer();
   gl.bindBuffer(gl.ARRAY_BUFFER, colBuf);
-  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(colors), gl.STATIC_DRAW);
+  gl.bufferData(gl.ARRAY_BUFFER, colorsArray, gl.STATIC_DRAW);
   const aCol = gl.getAttribLocation(program, "aColor");
   gl.enableVertexAttribArray(aCol);
   gl.vertexAttribPointer(aCol, 3, gl.FLOAT, false, 0, 0);
@@ -356,5 +413,18 @@ function renderWebGLFallback(
   const uMVP = gl.getUniformLocation(program, "uMVP");
   gl.uniformMatrix4fv(uMVP, false, mvp);
 
-  gl.drawArrays(gl.TRIANGLES, 0, positions.length / 3);
+  gl.drawArrays(gl.TRIANGLES, 0, positionsArray.length / 3);
+
+  return () => {
+    try {
+      if (posBuf) gl.deleteBuffer(posBuf);
+      if (colBuf) gl.deleteBuffer(colBuf);
+      if (program) gl.deleteProgram(program);
+      if (vs) gl.deleteShader(vs);
+      if (fs) gl.deleteShader(fs);
+      gl.getExtension("WEBGL_lose_context")?.loseContext();
+    } catch {
+      // Ignore errors during cleanup
+    }
+  };
 }

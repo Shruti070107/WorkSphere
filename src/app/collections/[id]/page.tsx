@@ -20,6 +20,13 @@ import Image from "next/image";
 import { ComparisonTool } from "@/components/collections/ComparisonTool";
 import { EmptyState } from "@/components/ui/EmptyState";
 
+interface ShortLink {
+  id: string;
+  shortCode: string;
+  expiresAt: string | null;
+  createdAt: string;
+}
+
 export default function FolderDetailsPage({
   params,
 }: {
@@ -37,8 +44,90 @@ export default function FolderDetailsPage({
   const [inviteLink, setInviteLink] = useState("");
   const [sendingInvite, setSendingInvite] = useState(false);
   const [updatingPublic, setUpdatingPublic] = useState(false);
+  const [sharing, setSharing] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [exportingPdf, setExportingPdf] = useState(false);
+
+  // Short Link states
+  const [_shortLinks, setShortLinks] = useState<ShortLink[]>([]);
+  const [_generatingShortLink, setGeneratingShortLink] = useState(false);
+  const [customShortCode, setCustomShortCode] = useState("");
+  const [shortLinkExpiration, setShortLinkExpiration] = useState<
+    "24h" | "7d" | "never"
+  >("never");
+  const [_shortLinkError, setShortLinkError] = useState<string | null>(null);
+  const [_copiedShortCode, _setCopiedShortCode] = useState<string | null>(null);
+
+  const fetchShortLinks = useCallback(async () => {
+    if (!id || userRole === "VIEWER") return;
+    try {
+      const res = await fetch(`/api/folders/${id}/short-links`);
+      const data = await res.json();
+      if (data.success) {
+        setShortLinks(data.shortLinks || []);
+      }
+    } catch (e) {
+      console.error("Failed to fetch short links", e);
+    }
+  }, [id, userRole]);
+
+  useEffect(() => {
+    if (userRole && userRole !== "VIEWER") {
+      fetchShortLinks();
+    }
+  }, [fetchShortLinks, userRole]);
+
+  const _handleGenerateShortLink = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setGeneratingShortLink(true);
+    setShortLinkError(null);
+    try {
+      const res = await fetch(`/api/folders/${id}/short-links`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          customCode: customShortCode || null,
+          expiration: shortLinkExpiration,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setCustomShortCode("");
+        setShortLinkExpiration("never");
+        // Reload folder details if visibility changed
+        if (!folder || !folder.isPublic || !folder.inviteToken) {
+          fetchFolder();
+        }
+        fetchShortLinks();
+      } else {
+        setShortLinkError(data.error || "Failed to generate short link");
+      }
+    } catch (err) {
+      console.error(err);
+      setShortLinkError("An error occurred. Please try again.");
+    } finally {
+      setGeneratingShortLink(false);
+    }
+  };
+
+  const _handleRevokeShortLink = async (linkId: string) => {
+    try {
+      const res = await fetch(`/api/folders/${id}/short-links/${linkId}`, {
+        method: "DELETE",
+      });
+      if (res.ok) {
+        fetchShortLinks();
+      } else {
+        const data = await res.json();
+        alert(data.error || "Failed to revoke short link");
+      }
+    } catch (err) {
+      console.error(err);
+      alert("An error occurred. Please try again.");
+    }
+  };
+
   const [filters, setFilters] = useState({
     hasOutlets: false,
     wifiQualityMin: false,
@@ -143,6 +232,37 @@ export default function FolderDetailsPage({
       console.error(e);
     } finally {
       setUpdatingPublic(false);
+    }
+  };
+
+  const handleShareCollection = async () => {
+    setSharing(true);
+    try {
+      const res = await fetch("/api/collections/public/share", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ folderId: id }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setFolder((prev: any) => ({
+          ...prev,
+          inviteToken: data.token,
+          isPublic: true,
+        }));
+
+        const shareUrl = `${window.location.origin}/collections/public/${data.token}`;
+        await navigator.clipboard.writeText(shareUrl);
+        setCopiedLink(true);
+        setTimeout(() => setCopiedLink(false), 2000);
+      } else {
+        alert("Failed to generate share link");
+      }
+    } catch (e) {
+      console.error(e);
+      alert("An error occurred");
+    } finally {
+      setSharing(false);
     }
   };
 
@@ -268,11 +388,24 @@ export default function FolderDetailsPage({
               <ArrowLeft className="w-5 h-5" />
             </Link>
             <div>
-              <h1 className="text-2xl font-bold text-zinc-900 dark:text-zinc-50">
-                {folder.name}
-              </h1>
+              <div className="flex items-center gap-3">
+                <div
+                  className="w-4 h-4 rounded-full shadow-sm shrink-0"
+                  style={{ backgroundColor: folder.color || "#3b82f6" }}
+                  title={`Tag color: ${folder.color || "#3b82f6"}`}
+                />
+                <h1 className="text-2xl font-bold text-zinc-900 dark:text-zinc-50">
+                  {folder.name}
+                </h1>
+                <span
+                  className="px-2.5 py-0.5 rounded-full text-xs font-semibold text-white shadow-xs"
+                  style={{ backgroundColor: folder.color || "#3b82f6" }}
+                >
+                  {folder.color || "#3b82f6"}
+                </span>
+              </div>
               {folder.description && (
-                <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-1">
                   {folder.description}
                 </p>
               )}
@@ -489,6 +622,55 @@ export default function FolderDetailsPage({
                     />
                   </button>
                 </div>
+
+                {folder.inviteToken && folder.isPublic && (
+                  <div className="mt-4 border-t border-zinc-200 dark:border-zinc-800 pt-4 space-y-2">
+                    <p className="text-xs font-semibold text-zinc-900 dark:text-white">
+                      Public Share Link
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        readOnly
+                        value={`${window.location.origin}/collections/public/${folder.inviteToken}`}
+                        className="flex-1 text-xs rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-zinc-600 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-400 select-all outline-none"
+                      />
+                      <button
+                        onClick={async () => {
+                          const url = `${window.location.origin}/collections/public/${folder.inviteToken}`;
+                          await navigator.clipboard.writeText(url);
+                          setCopiedLink(true);
+                          setTimeout(() => setCopiedLink(false), 2000);
+                        }}
+                        className="p-2 border border-zinc-200 dark:border-zinc-800 rounded-xl bg-white dark:bg-zinc-900 hover:bg-zinc-50 dark:hover:bg-zinc-800 text-zinc-600 dark:text-zinc-400 flex items-center justify-center shrink-0 min-w-[50px] min-h-[34px]"
+                        title="Copy to clipboard"
+                      >
+                        {copiedLink ? (
+                          <span className="text-[10px] text-emerald-500 font-bold">
+                            Copied
+                          </span>
+                        ) : (
+                          <Copy className="w-3.5 h-3.5" />
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {(!folder.inviteToken || !folder.isPublic) && (
+                  <button
+                    onClick={handleShareCollection}
+                    disabled={sharing}
+                    className="w-full mt-4 flex items-center justify-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-xl text-sm transition-all disabled:opacity-50 shadow-lg shadow-indigo-500/20 active:scale-[0.98]"
+                  >
+                    {sharing ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Globe className="w-4 h-4" />
+                    )}
+                    Share Collection
+                  </button>
+                )}
               </div>
             )}
 

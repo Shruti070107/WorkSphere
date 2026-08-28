@@ -1,4 +1,3 @@
-import { prisma } from "@/lib/prisma";
 import Groq from "groq-sdk";
 import { applyFilters } from "@/lib/filters";
 
@@ -96,8 +95,18 @@ For general chat: {"skipAgents": true, "reasoning": "General conversation"}`;
     if (jsonMatch) {
       return JSON.parse(jsonMatch[0]);
     }
-  } catch (error) {
+  } catch (error: any) {
     console.error("Orchestrator error:", error);
+    if (
+      error?.status === 429 ||
+      error?.statusCode === 429 ||
+      error?.name === "RateLimitError" ||
+      (error instanceof Error &&
+        (error.message.includes("429") ||
+          error.message.toLowerCase().includes("rate limit")))
+    ) {
+      throw error;
+    }
   }
 
   return {
@@ -111,7 +120,7 @@ For general chat: {"skipAgents": true, "reasoning": "General conversation"}`;
 export async function contextAgent(
   userMessage: string,
   userLocation?: { lat: number; lng: number },
-  userId?: string | null,
+  _userId?: string | null,
 ): Promise<{
   intent: string;
   parameters: {
@@ -160,8 +169,18 @@ Output ONLY valid JSON:
       result.parameters.location = userLocation || null;
       return result;
     }
-  } catch (error) {
+  } catch (error: any) {
     console.error("ContextAgent error:", error);
+    if (
+      error?.status === 429 ||
+      error?.statusCode === 429 ||
+      error?.name === "RateLimitError" ||
+      (error instanceof Error &&
+        (error.message.includes("429") ||
+          error.message.toLowerCase().includes("rate limit")))
+    ) {
+      throw error;
+    }
   }
 
   return {
@@ -232,10 +251,18 @@ export async function dataAgent(
     },
   ];
 
+  let source = "mock";
+  try {
+    const res = await fetch("https://overpass-api.de/api/interpreter");
+    if (!res.ok) source = "Simulation Fallback";
+  } catch {
+    source = "Simulation Fallback";
+  }
+
   const filtered = applyFilters(mockVenues as any, filters || {});
   return {
     venues: filtered as any,
-    meta: { total: filtered.length, source: "mock" },
+    meta: { total: filtered.length, source },
     reasoning: `Found ${filtered.length} matching venues`,
   };
 }
@@ -243,7 +270,7 @@ export async function dataAgent(
 // AGENT 4: REASONING
 export function reasoningAgent(
   venues: RawVenue[],
-  preferences: { workType?: string; amenities?: string[] },
+  _preferences: { workType?: string; amenities?: string[] },
 ): {
   rankedVenues: Array<
     RawVenue & { score: number; scoreBreakdown: Record<string, number> }
@@ -310,7 +337,9 @@ export async function actionAgent(
   return {
     message,
     mapUpdates: {
-      center: markers[0] ? { lat: markers[0].lat, lng: markers[0].lng } : { lat: 0, lng: 0 },
+      center: markers[0]
+        ? { lat: markers[0].lat, lng: markers[0].lng }
+        : { lat: 0, lng: 0 },
       zoom: 14,
       markers,
     },

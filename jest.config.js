@@ -19,6 +19,12 @@ const customJestConfig = {
     '^uncrypto$': '<rootDir>/node_modules/uncrypto/dist/crypto.node.cjs',
   },
   testPathIgnorePatterns: ['<rootDir>/node_modules/', '<rootDir>/.next/', 'e2e'],
+  // Canvas/WebGL/WASM-heavy suites accumulate memory across test files within
+  // a worker; recycle a worker once it grows past this instead of letting it
+  // run out of heap partway through the full suite. Capping workers keeps
+  // total concurrent memory demand within reach of typical CI/dev machines.
+  workerIdleMemoryLimit: '256MB',
+  maxWorkers: '50%',
   collectCoverageFrom: [
     'src/**/*.{js,jsx,ts,tsx}',
     '!src/**/*.d.ts',
@@ -28,8 +34,5 @@ const customJestConfig = {
 
 module.exports = async () => {
   const config = await createJestConfig(customJestConfig)();
-  config.transform = {
-    '^.+\\.(ts|tsx|js|jsx)$': ['ts-jest', { tsconfig: { jsx: 'react-jsx' } }],
-  };
   return config;
 };

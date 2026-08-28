@@ -66,284 +66,6 @@ export interface FloorPlanData {
   }>;
 }
 
-const SEAT_COLORS: Record<string, [number, number, number]> = {
-  hot_desk: [0.2, 0.6, 0.9],
-  fixed_desk: [0.3, 0.8, 0.4],
-  meeting_room: [0.8, 0.5, 0.2],
-  phone_booth: [0.7, 0.3, 0.7],
-};
-
-function createSeatMesh(
-  seat: FloorPlanData["seats"][0],
-  size: number = 0.3,
-): { vertices: number[]; indices: number[] } {
-  const color = SEAT_COLORS[seat.type] ?? [0.5, 0.5, 0.5];
-  const y = 0.4;
-  const h = seat.type === "phone_booth" ? 1.8 : 0.05;
-  const w = size;
-  const d = size;
-
-  const vertices: number[] = [];
-  const indices: number[] = [];
-
-  // Box face data: [normal, corners...]
-  const faces: Array<{
-    normal: [number, number, number];
-    corners: [number, number, number][];
-    uvs: [number, number][];
-  }> = [
-    // Front
-    {
-      normal: [0, 0, 1],
-      corners: [
-        [seat.x - w / 2, y, seat.z + d / 2],
-        [seat.x + w / 2, y, seat.z + d / 2],
-        [seat.x + w / 2, y + h, seat.z + d / 2],
-        [seat.x - w / 2, y + h, seat.z + d / 2],
-      ],
-      uvs: [
-        [0, 0],
-        [1, 0],
-        [1, 1],
-        [0, 1],
-      ],
-    },
-    // Back
-    {
-      normal: [0, 0, -1],
-      corners: [
-        [seat.x + w / 2, y, seat.z - d / 2],
-        [seat.x - w / 2, y, seat.z - d / 2],
-        [seat.x - w / 2, y + h, seat.z - d / 2],
-        [seat.x + w / 2, y + h, seat.z - d / 2],
-      ],
-      uvs: [
-        [0, 0],
-        [1, 0],
-        [1, 1],
-        [0, 1],
-      ],
-    },
-    // Left
-    {
-      normal: [-1, 0, 0],
-      corners: [
-        [seat.x - w / 2, y, seat.z - d / 2],
-        [seat.x - w / 2, y, seat.z + d / 2],
-        [seat.x - w / 2, y + h, seat.z + d / 2],
-        [seat.x - w / 2, y + h, seat.z - d / 2],
-      ],
-      uvs: [
-        [0, 0],
-        [1, 0],
-        [1, 1],
-        [0, 1],
-      ],
-    },
-    // Right
-    {
-      normal: [1, 0, 0],
-      corners: [
-        [seat.x + w / 2, y, seat.z + d / 2],
-        [seat.x + w / 2, y, seat.z - d / 2],
-        [seat.x + w / 2, y + h, seat.z - d / 2],
-        [seat.x + w / 2, y + h, seat.z + d / 2],
-      ],
-      uvs: [
-        [0, 0],
-        [1, 0],
-        [1, 1],
-        [0, 1],
-      ],
-    },
-    // Top
-    {
-      normal: [0, 1, 0],
-      corners: [
-        [seat.x - w / 2, y + h, seat.z + d / 2],
-        [seat.x + w / 2, y + h, seat.z + d / 2],
-        [seat.x + w / 2, y + h, seat.z - d / 2],
-        [seat.x - w / 2, y + h, seat.z - d / 2],
-      ],
-      uvs: [
-        [0, 0],
-        [1, 0],
-        [1, 1],
-        [0, 1],
-      ],
-    },
-  ];
-
-  for (const face of faces) {
-    const baseIdx = vertices.length / 10;
-    for (let i = 0; i < 4; i++) {
-      vertices.push(
-        ...face.corners[i],
-        ...face.normal,
-        ...color,
-        ...face.uvs[i],
-      );
-    }
-    indices.push(baseIdx, baseIdx + 1, baseIdx + 2);
-    indices.push(baseIdx, baseIdx + 2, baseIdx + 3);
-  }
-
-  // Power outlet indicator (small yellow cube on top)
-  if (seat.hasPower) {
-    const py = y + h + 0.02;
-    const ps = 0.05;
-    const pc: [number, number, number] = [1.0, 0.9, 0.1];
-    const pFaces: Array<{
-      normal: [number, number, number];
-      corners: [number, number, number][];
-    }> = [
-      {
-        normal: [0, 0, 1],
-        corners: [
-          [seat.x - ps, py, seat.z + ps],
-          [seat.x + ps, py, seat.z + ps],
-          [seat.x + ps, py + ps, seat.z + ps],
-          [seat.x - ps, py + ps, seat.z + ps],
-        ],
-      },
-      {
-        normal: [0, 0, -1],
-        corners: [
-          [seat.x + ps, py, seat.z - ps],
-          [seat.x - ps, py, seat.z - ps],
-          [seat.x - ps, py + ps, seat.z - ps],
-          [seat.x + ps, py + ps, seat.z - ps],
-        ],
-      },
-      {
-        normal: [0, 1, 0],
-        corners: [
-          [seat.x - ps, py + ps, seat.z + ps],
-          [seat.x + ps, py + ps, seat.z + ps],
-          [seat.x + ps, py + ps, seat.z - ps],
-          [seat.x - ps, py + ps, seat.z - ps],
-        ],
-      },
-    ];
-
-    for (const face of pFaces) {
-      const baseIdx = vertices.length / 10;
-      for (let i = 0; i < 4; i++) {
-        vertices.push(...face.corners[i], ...face.normal, ...pc, 0, 0);
-      }
-      indices.push(baseIdx, baseIdx + 1, baseIdx + 2);
-      indices.push(baseIdx, baseIdx + 2, baseIdx + 3);
-    }
-  }
-
-  return { vertices, indices };
-}
-
-function createFloorMesh(data: FloorPlanData): {
-  vertices: number[];
-  indices: number[];
-} {
-  const vertices: number[] = [];
-  const indices: number[] = [];
-  const floorColor: [number, number, number] = [0.15, 0.15, 0.18];
-
-  // Floor quad
-  const hw = data.width / 2;
-  const hd = data.depth / 2;
-  const floorVerts: [number, number, number][] = [
-    [-hw, 0, -hd],
-    [hw, 0, -hd],
-    [hw, 0, hd],
-    [-hw, 0, hd],
-  ];
-  const floorUVs: [number, number][] = [
-    [0, 0],
-    [1, 0],
-    [1, 1],
-    [0, 1],
-  ];
-  const baseIdx = vertices.length / 10;
-  for (let i = 0; i < 4; i++) {
-    vertices.push(...floorVerts[i], 0, 1, 0, ...floorColor, ...floorUVs[i]);
-  }
-  indices.push(baseIdx, baseIdx + 1, baseIdx + 2);
-  indices.push(baseIdx, baseIdx + 2, baseIdx + 3);
-
-  return { vertices, indices };
-}
-
-function createWallMesh(wall: FloorPlanData["walls"][0]): {
-  vertices: number[];
-  indices: number[];
-} {
-  const vertices: number[] = [];
-  const indices: number[] = [];
-  const wallColor: [number, number, number] = [0.3, 0.3, 0.35];
-
-  const dx = wall.x2 - wall.x1;
-  const dz = wall.z2 - wall.z1;
-  const len = Math.sqrt(dx * dx + dz * dz);
-  const nx = -dz / len;
-  const nz = dx / len;
-
-  const corners: [number, number, number][] = [
-    [wall.x1, 0, wall.z1],
-    [wall.x2, 0, wall.z2],
-    [wall.x2, wall.height, wall.z2],
-    [wall.x1, wall.height, wall.z1],
-  ];
-
-  const baseIdx = vertices.length / 10;
-  for (let i = 0; i < 4; i++) {
-    vertices.push(
-      ...corners[i],
-      nx,
-      0,
-      nz,
-      ...wallColor,
-      i < 2 ? 0 : 1,
-      i % 2 === 0 ? 0 : 1,
-    );
-  }
-  indices.push(baseIdx, baseIdx + 1, baseIdx + 2);
-  indices.push(baseIdx, baseIdx + 2, baseIdx + 3);
-
-  return { vertices, indices };
-}
-
-function buildFloorPlanMesh(data: FloorPlanData): FloorPlanMesh {
-  const allVertices: number[] = [];
-  const allIndices: number[] = [];
-
-  // Floor
-  const floor = createFloorMesh(data);
-  allVertices.push(...floor.vertices);
-  allIndices.push(...floor.indices);
-
-  // Walls
-  for (const wall of data.walls) {
-    const wallMesh = createWallMesh(wall);
-    const offset = allVertices.length / 10;
-    allVertices.push(...wallMesh.vertices);
-    allIndices.push(...wallMesh.indices.map((i) => i + offset));
-  }
-
-  // Seats
-  for (const seat of data.seats) {
-    const seatMesh = createSeatMesh(seat);
-    const offset = allVertices.length / 10;
-    allVertices.push(...seatMesh.vertices);
-    allIndices.push(...seatMesh.indices.map((i) => i + offset));
-  }
-
-  return {
-    vertices: new Float32Array(allVertices),
-    indices: new Uint16Array(allIndices),
-    vertexCount: allIndices.length,
-    indexCount: allIndices.length,
-  };
-}
-
 function mat4Perspective(
   fov: number,
   aspect: number,
@@ -456,11 +178,79 @@ export class WebGPUFloorPlanRenderer {
   private animationFrame = 0;
   private time = 0;
   private isDeviceLost = false;
-  private currentData: FloorPlanData | null = null;
+  private currentMesh: FloorPlanMesh | null = null;
   private visibilityHandler: (() => void) | null = null;
+
+  // Named bound handlers so destroy() can call removeEventListener on them
+  private _onMouseDown: (e: MouseEvent) => void;
+  private _onMouseMove: (e: MouseEvent) => void;
+  private _onMouseUp: () => void;
+  private _onMouseLeave: () => void;
+  private _onWheel: (e: WheelEvent) => void;
+  private _onTouchStart: (e: TouchEvent) => void;
+  private _onTouchMove: (e: TouchEvent) => void;
+  private _onTouchEnd: () => void;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
+    // Initialise bound handlers before setupInteraction() so they are
+    // available as stable references for removeEventListener in destroy().
+    this._onMouseDown = (e: MouseEvent) => {
+      this.isDragging = true;
+      this.lastMouse = { x: e.clientX, y: e.clientY };
+    };
+    this._onMouseMove = (e: MouseEvent) => {
+      if (!this.isDragging) return;
+      const dx = e.clientX - this.lastMouse.x;
+      const dy = e.clientY - this.lastMouse.y;
+      this.camera.rotationY += dx * 0.01;
+      this.camera.rotationX = Math.max(
+        -Math.PI / 2.5,
+        Math.min(-0.1, this.camera.rotationX + dy * 0.01),
+      );
+      this.lastMouse = { x: e.clientX, y: e.clientY };
+    };
+    this._onMouseUp = () => {
+      this.isDragging = false;
+    };
+    this._onMouseLeave = () => {
+      this.isDragging = false;
+    };
+    this._onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      this.camera.distance = Math.max(
+        2,
+        Math.min(20, this.camera.distance + e.deltaY * 0.01),
+      );
+    };
+    this._onTouchStart = (e: TouchEvent) => {
+      if (e.touches.length === 1) {
+        this.isDragging = true;
+        this.lastMouse = {
+          x: e.touches[0].clientX,
+          y: e.touches[0].clientY,
+        };
+      }
+    };
+    this._onTouchMove = (e: TouchEvent) => {
+      e.preventDefault();
+      if (e.touches.length === 1 && this.isDragging) {
+        const dx = e.touches[0].clientX - this.lastMouse.x;
+        const dy = e.touches[0].clientY - this.lastMouse.y;
+        this.camera.rotationY += dx * 0.01;
+        this.camera.rotationX = Math.max(
+          -Math.PI / 2.5,
+          Math.min(-0.1, this.camera.rotationX + dy * 0.01),
+        );
+        this.lastMouse = {
+          x: e.touches[0].clientX,
+          y: e.touches[0].clientY,
+        };
+      }
+    };
+    this._onTouchEnd = () => {
+      this.isDragging = false;
+    };
     this.setupInteraction();
     this.setupVisibilityHandler();
   }
@@ -483,70 +273,19 @@ export class WebGPUFloorPlanRenderer {
   }
 
   private setupInteraction(): void {
-    this.canvas.addEventListener("mousedown", (e) => {
-      this.isDragging = true;
-      this.lastMouse = { x: e.clientX, y: e.clientY };
-    });
-
-    this.canvas.addEventListener("mousemove", (e) => {
-      if (!this.isDragging) return;
-      const dx = e.clientX - this.lastMouse.x;
-      const dy = e.clientY - this.lastMouse.y;
-      this.camera.rotationY += dx * 0.01;
-      this.camera.rotationX = Math.max(
-        -Math.PI / 2.5,
-        Math.min(-0.1, this.camera.rotationX + dy * 0.01),
-      );
-      this.lastMouse = { x: e.clientX, y: e.clientY };
-    });
-
-    this.canvas.addEventListener("mouseup", () => {
-      this.isDragging = false;
-    });
-
-    this.canvas.addEventListener("mouseleave", () => {
-      this.isDragging = false;
-    });
-
-    this.canvas.addEventListener("wheel", (e) => {
-      e.preventDefault();
-      this.camera.distance = Math.max(
-        2,
-        Math.min(20, this.camera.distance + e.deltaY * 0.01),
-      );
-    });
-
+    this.canvas.addEventListener("mousedown", this._onMouseDown);
+    this.canvas.addEventListener("mousemove", this._onMouseMove);
+    this.canvas.addEventListener("mouseup", this._onMouseUp);
+    this.canvas.addEventListener("mouseleave", this._onMouseLeave);
+    this.canvas.addEventListener("wheel", this._onWheel, { passive: false });
     // Touch support
-    this.canvas.addEventListener("touchstart", (e) => {
-      if (e.touches.length === 1) {
-        this.isDragging = true;
-        this.lastMouse = {
-          x: e.touches[0].clientX,
-          y: e.touches[0].clientY,
-        };
-      }
+    this.canvas.addEventListener("touchstart", this._onTouchStart, {
+      passive: false,
     });
-
-    this.canvas.addEventListener("touchmove", (e) => {
-      e.preventDefault();
-      if (e.touches.length === 1 && this.isDragging) {
-        const dx = e.touches[0].clientX - this.lastMouse.x;
-        const dy = e.touches[0].clientY - this.lastMouse.y;
-        this.camera.rotationY += dx * 0.01;
-        this.camera.rotationX = Math.max(
-          -Math.PI / 2.5,
-          Math.min(-0.1, this.camera.rotationX + dy * 0.01),
-        );
-        this.lastMouse = {
-          x: e.touches[0].clientX,
-          y: e.touches[0].clientY,
-        };
-      }
+    this.canvas.addEventListener("touchmove", this._onTouchMove, {
+      passive: false,
     });
-
-    this.canvas.addEventListener("touchend", () => {
-      this.isDragging = false;
-    });
+    this.canvas.addEventListener("touchend", this._onTouchEnd);
   }
 
   async initialize(): Promise<boolean> {
@@ -566,18 +305,20 @@ export class WebGPUFloorPlanRenderer {
         console.error("[WebGPU] Uncaptured error detected:", event.error);
       });
 
-      this.device.lost.then(async (info: { reason: string; message: string }) => {
-        console.warn(
-          `[WebGPU] GPUDevice lost (${info.reason}): ${info.message}`,
-        );
-        this.isDeviceLost = true;
-        this.cleanupGPUResources();
-        
-        if (info.reason !== "destroyed") {
-          console.info("[WebGPU] Attempting automatic device recovery...");
-          await this.reinitialize();
-        }
-      });
+      this.device.lost.then(
+        async (info: { reason: string; message: string }) => {
+          console.warn(
+            `[WebGPU] GPUDevice lost (${info.reason}): ${info.message}`,
+          );
+          this.isDeviceLost = true;
+          this.cleanupGPUResources();
+
+          if (info.reason !== "destroyed") {
+            console.info("[WebGPU] Attempting automatic device recovery...");
+            await this.reinitialize();
+          }
+        },
+      );
 
       this.context = this.canvas.getContext(
         "webgpu",
@@ -648,17 +389,16 @@ export class WebGPUFloorPlanRenderer {
 
   async reinitialize(): Promise<boolean> {
     const success = await this.initialize();
-    if (success && this.currentData) {
-      this.loadFloorPlan(this.currentData);
+    if (success && this.currentMesh) {
+      this.loadFloorPlanMesh(this.currentMesh);
     }
     return success;
   }
 
-  loadFloorPlan(data: FloorPlanData): void {
-    this.currentData = data;
+  loadFloorPlanMesh(mesh: FloorPlanMesh): void {
+    this.currentMesh = mesh;
     if (!this.device || this.isDeviceLost) return;
 
-    const mesh = buildFloorPlanMesh(data);
     this.indexCount = mesh.indexCount;
 
     this.vertexBuffer?.destroy();
@@ -668,13 +408,21 @@ export class WebGPUFloorPlanRenderer {
       size: mesh.vertices.byteLength,
       usage: BufferUsage.VERTEX | BufferUsage.COPY_DST,
     });
-    this.device.queue.writeBuffer(this.vertexBuffer!, 0, mesh.vertices as unknown as BufferSource);
+    this.device.queue.writeBuffer(
+      this.vertexBuffer!,
+      0,
+      mesh.vertices as unknown as BufferSource,
+    );
 
     this.indexBuffer = this.device.createBuffer({
       size: mesh.indices.byteLength,
       usage: BufferUsage.INDEX | BufferUsage.COPY_DST,
     });
-    this.device.queue.writeBuffer(this.indexBuffer!, 0, mesh.indices as unknown as BufferSource);
+    this.device.queue.writeBuffer(
+      this.indexBuffer!,
+      0,
+      mesh.indices as unknown as BufferSource,
+    );
   }
 
   render(): void {
@@ -814,6 +562,16 @@ export class WebGPUFloorPlanRenderer {
     if (this.visibilityHandler && typeof document !== "undefined") {
       document.removeEventListener("visibilitychange", this.visibilityHandler);
     }
+    // Remove all 9 canvas interaction listeners to prevent memory leaks
+    // when the floor plan viewer is mounted/unmounted multiple times.
+    this.canvas.removeEventListener("mousedown", this._onMouseDown);
+    this.canvas.removeEventListener("mousemove", this._onMouseMove);
+    this.canvas.removeEventListener("mouseup", this._onMouseUp);
+    this.canvas.removeEventListener("mouseleave", this._onMouseLeave);
+    this.canvas.removeEventListener("wheel", this._onWheel);
+    this.canvas.removeEventListener("touchstart", this._onTouchStart);
+    this.canvas.removeEventListener("touchmove", this._onTouchMove);
+    this.canvas.removeEventListener("touchend", this._onTouchEnd);
     this.cleanupGPUResources();
   }
 }

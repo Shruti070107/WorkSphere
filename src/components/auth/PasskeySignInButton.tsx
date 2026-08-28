@@ -48,20 +48,31 @@ export function PasskeySignInButton() {
       const resData = await verifyRes.json();
 
       if (resData.verified) {
+        // Hard navigation (not router.push) so the browser picks up the
+        // freshly issued session cookie before the next page renders.
         if (resData.signInUrl) {
           window.location.href = resData.signInUrl;
         } else {
-          // Redirect to homepage/dashboard on successful authentication
+          // eslint-disable-next-line @next/next/no-location-assign-relative-destination
           window.location.href = "/";
         }
       }
     } catch (err: unknown) {
       console.error("Passkey sign-in error:", err);
+      const name = err instanceof Error ? err.name : "";
       const message =
         err instanceof Error ? err.message : "Passkey authentication failed.";
-      if (!message.includes("cancelled") && !message.includes("abort")) {
-        setError(message);
+
+      if (
+        name === "NotAllowedError" ||
+        name === "AbortError" ||
+        message.toLowerCase().includes("cancelled") ||
+        message.toLowerCase().includes("abort")
+      ) {
+        return;
       }
+
+      setError(message);
     } finally {
       setLoading(false);
     }
