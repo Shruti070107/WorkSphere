@@ -1,139 +1,5 @@
 "use client";
 
- feat/noise-level-slider-filter
-import React, { useState } from "react";
-import { SlidersHorizontal, X, RotateCcw } from "lucide-react";
-import NoiseLevelSlider, {
-  MAX_DB_LIMIT,
-  MIN_DB_LIMIT,
-} from "./NoiseLevelSlider";
-
-export interface VenueFilterState {
-  minDb: number;
-  maxDb: number;
-}
-
-interface VenueFilterBarProps {
-  filters: VenueFilterState;
-  onFilterChange: (next: VenueFilterState) => void;
-  onReset: () => void;
-}
-
-export const VenueFilterBar: React.FC<VenueFilterBarProps> = ({
-  filters,
-  onFilterChange,
-  onReset,
-}) => {
-  const [isMobileSheetOpen, setIsMobileSheetOpen] = useState(false);
-
-  const hasActiveNoiseFilter =
-    filters.minDb > MIN_DB_LIMIT || filters.maxDb < MAX_DB_LIMIT;
-
-  return (
-    <>
-      {/* Desktop Filter Sidebar */}
-      <aside
-        aria-label="Desktop venue filters"
-        className="hidden w-72 shrink-0 space-y-4 lg:block"
-      >
-        <div className="flex items-center justify-between">
-          <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-300">
-            Filters
-          </h2>
-          {hasActiveNoiseFilter && (
-            <button
-              type="button"
-              onClick={onReset}
-              className="inline-flex items-center gap-1 text-xs text-cyan-400 hover:text-cyan-300"
-            >
-              <RotateCcw className="h-3 w-3" />
-              Reset
-            </button>
-          )}
-        </div>
-
-        <NoiseLevelSlider
-          minDb={filters.minDb}
-          maxDb={filters.maxDb}
-          onChange={({ minDb, maxDb }) =>
-            onFilterChange({ ...filters, minDb, maxDb })
-          }
-        />
-      </aside>
-
-      {/* Mobile Filter Trigger Bar */}
-      <div className="flex items-center justify-between lg:hidden">
-        <button
-          type="button"
-          onClick={() => setIsMobileSheetOpen(true)}
-          className="inline-flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-900 px-3.5 py-2 text-xs font-semibold text-slate-100 hover:bg-slate-800"
-        >
-          <SlidersHorizontal className="h-3.5 w-3.5 text-cyan-400" />
-          <span>Acoustic &amp; Venue Filters</span>
-          {hasActiveNoiseFilter && (
-            <span className="rounded-full bg-cyan-500/20 px-2 py-0.5 text-[11px] text-cyan-300">
-              {filters.minDb}–{filters.maxDb} dB
-            </span>
-          )}
-        </button>
-      </div>
-
-      {/* Mobile Filter Bottom Sheet */}
-      {isMobileSheetOpen && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-label="Mobile venue filters"
-          className="fixed inset-0 z-50 flex flex-col justify-end bg-slate-950/75 backdrop-blur-sm lg:hidden"
-          onClick={() => setIsMobileSheetOpen(false)}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            className="w-full rounded-t-2xl border-t border-slate-800 bg-slate-900 p-5 text-slate-100 shadow-2xl"
-          >
-            <div className="mb-4 flex items-center justify-between border-b border-slate-800 pb-3">
-              <h2 className="text-base font-semibold">Filter Venues</h2>
-              <button
-                type="button"
-                onClick={() => setIsMobileSheetOpen(false)}
-                aria-label="Close mobile filters"
-                className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-
-            <NoiseLevelSlider
-              minDb={filters.minDb}
-              maxDb={filters.maxDb}
-              onChange={({ minDb, maxDb }) =>
-                onFilterChange({ ...filters, minDb, maxDb })
-              }
-            />
-
-            <div className="mt-5 flex items-center gap-3">
-              <button
-                type="button"
-                onClick={onReset}
-                className="flex-1 rounded-lg border border-slate-700 bg-slate-800 py-2.5 text-xs font-semibold text-slate-200 hover:bg-slate-700"
-              >
-                Reset
-              </button>
-              <button
-                type="button"
-                onClick={() => setIsMobileSheetOpen(false)}
-                className="flex-1 rounded-lg bg-cyan-600 py-2.5 text-xs font-semibold text-white hover:bg-cyan-500"
-              >
-                Show Venues
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </>
-  );
-};
-
 import React, { useRef, useEffect, useState, useCallback } from "react";
 import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import { motion, LayoutGroup } from "framer-motion";
@@ -363,7 +229,14 @@ export function VenueFilterBar({
         router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
       }
     },
-    [onSelectCategory, onCategoryChange, syncWithUrl, pathname, router, searchParams],
+    [
+      onSelectCategory,
+      onCategoryChange,
+      syncWithUrl,
+      pathname,
+      router,
+      searchParams,
+    ],
   );
 
   const handleCategoryKeyDown = useCallback(
@@ -428,8 +301,12 @@ export function VenueFilterBar({
     const maxDb = searchParams.get("maxDb");
     if (minDb !== null || maxDb !== null) {
       return [
-        minDb ? Math.max(20, Math.min(100, Number(minDb))) : DEFAULT_DECIBEL_RANGE[0],
-        maxDb ? Math.max(20, Math.min(100, Number(maxDb))) : DEFAULT_DECIBEL_RANGE[1],
+        minDb
+          ? Math.max(20, Math.min(100, Number(minDb)))
+          : DEFAULT_DECIBEL_RANGE[0],
+        maxDb
+          ? Math.max(20, Math.min(100, Number(maxDb)))
+          : DEFAULT_DECIBEL_RANGE[1],
       ];
     }
     return null;
@@ -476,11 +353,13 @@ export function VenueFilterBar({
     const isDbCustom =
       internalDecibels[0] !== DEFAULT_DECIBEL_RANGE[0] ||
       internalDecibels[1] !== DEFAULT_DECIBEL_RANGE[1] ||
-      (searchParams && (searchParams.has("minDb") || searchParams.has("maxDb")));
+      (searchParams &&
+        (searchParams.has("minDb") || searchParams.has("maxDb")));
     const isWifiCustom =
       internalWifi[0] !== DEFAULT_WIFI_RANGE[0] ||
       internalWifi[1] !== DEFAULT_WIFI_RANGE[1] ||
-      (searchParams && (searchParams.has("minWifi") || searchParams.has("maxWifi")));
+      (searchParams &&
+        (searchParams.has("minWifi") || searchParams.has("maxWifi")));
     return isDbCustom || isWifiCustom;
   }, [internalDecibels, internalWifi, searchParams]);
 
@@ -744,7 +623,7 @@ export function VenueFilterBar({
                     "relative inline-flex items-center justify-center gap-1.5",
                     "min-h-[40px] sm:min-h-[44px] px-4 py-1.5 rounded-full",
                     "text-xs font-semibold shrink-0 select-none",
-                    "transition-colors duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500",
+                    "transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-900",
                     isSelected
                       ? "text-white"
                       : "text-zinc-600 hover:text-zinc-900 bg-zinc-100/80 hover:bg-zinc-200/80 border border-zinc-200/80 dark:bg-zinc-800/80 dark:hover:bg-zinc-800 dark:text-zinc-300 dark:border-zinc-700/80",
@@ -753,7 +632,11 @@ export function VenueFilterBar({
                   {isSelected && (
                     <motion.div
                       layoutId="activeFilterPill"
-                      transition={{ type: "spring", stiffness: 450, damping: 30 }}
+                      transition={{
+                        type: "spring",
+                        stiffness: 450,
+                        damping: 30,
+                      }}
                       className="absolute inset-0 bg-blue-600 rounded-full shadow-sm"
                       data-testid="active-filter-pill-indicator"
                     />
@@ -805,6 +688,7 @@ export function VenueFilterBar({
                 "min-h-[44px] px-3 rounded-full",
                 "text-xs font-semibold shrink-0 select-none",
                 "transition-all active:scale-95 border",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-900",
                 hasCustomRangeActive || isPopoverOpen
                   ? "bg-blue-600 text-white border-blue-600 shadow-sm hover:bg-blue-700 dark:bg-blue-600 dark:border-blue-500"
                   : "bg-zinc-100 hover:bg-zinc-200/80 text-zinc-700 border-zinc-200/80 dark:bg-zinc-800/80 dark:hover:bg-zinc-800 dark:text-zinc-300 dark:border-zinc-700/80",
@@ -843,6 +727,7 @@ export function VenueFilterBar({
                   "min-h-[44px] px-3 rounded-full",
                   "text-xs font-semibold shrink-0 select-none",
                   "transition-all active:scale-95 border",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-900",
                   isSelected
                     ? "bg-blue-600 text-white border-blue-600 shadow-sm hover:bg-blue-700 dark:bg-blue-600 dark:border-blue-500"
                     : "bg-zinc-100 hover:bg-zinc-200/80 text-zinc-700 border-zinc-200/80 dark:bg-zinc-800/80 dark:hover:bg-zinc-800 dark:text-zinc-300 dark:border-zinc-700/80",
@@ -888,7 +773,7 @@ export function VenueFilterBar({
               type="button"
               data-testid="close-filter-popover-button"
               onClick={() => setIsPopoverOpen(false)}
-              className="rounded-lg p-1 text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+              className="rounded-lg p-1 text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-900"
               aria-label="Close custom filters popover"
             >
               <X className="w-4 h-4" />
@@ -951,7 +836,7 @@ export function VenueFilterBar({
               type="button"
               data-testid="reset-range-filters-button"
               onClick={handleResetRangeFilters}
-              className="inline-flex items-center gap-1 text-xs font-medium text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200 transition-colors"
+              className="inline-flex items-center gap-1 text-xs font-medium text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-900"
             >
               <RotateCcw className="w-3.5 h-3.5" />
               Reset Defaults
@@ -961,7 +846,7 @@ export function VenueFilterBar({
               type="button"
               data-testid="apply-range-filters-button"
               onClick={handleApplyRangeFilters}
-              className="inline-flex items-center justify-center rounded-xl bg-blue-600 hover:bg-blue-700 px-4 py-2 text-xs font-semibold text-white shadow-sm transition-all active:scale-95"
+              className="inline-flex items-center justify-center rounded-xl bg-blue-600 hover:bg-blue-700 px-4 py-2 text-xs font-semibold text-white shadow-sm transition-all active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-900"
             >
               Apply Filters
             </button>
@@ -971,6 +856,5 @@ export function VenueFilterBar({
     </div>
   );
 }
- main
 
 export default VenueFilterBar;

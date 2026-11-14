@@ -1,202 +1,6 @@
 import {
   Connection,
- fix/solana-escrow-rpc-timeout-retry
-  SimulatedTransactionResponse,
-  Transaction,
-  VersionedTransaction,
-} from "@solana/web3.js";
-
-export const DEFAULT_SIMULATION_TIMEOUT_MS = 8000;
-export const RETRY_BASE_DELAYS_MS = [500, 1500, 3000] as const;
-
-export type SimulationSuccessResult = {
-  success: true;
-  simulation: SimulatedTransactionResponse;
-  rpcEndpoint: string;
-  attempts: number;
-};
-
-export type SimulationFailureResult = {
-  success: false;
-  error: "RPC_SIMULATION_TIMEOUT" | "RPC_SIMULATION_FAILED";
-  message: string;
-  retryable: boolean;
-  attempts: number;
-};
-
-export type EscrowSimulationResult =
-  SimulationSuccessResult | SimulationFailureResult;
-
-export interface SimulateEscrowOptions {
-  timeoutMs?: number;
-  maxRetries?: number;
-  baseDelaysMs?: readonly number[];
-  primaryRpcUrl?: string;
-  fallbackRpcUrl?: string;
-  connectionFactory?: (endpoint: string) => Connection;
-  sleepFn?: (ms: number) => Promise<void>;
-}
-
-class RpcTimeoutError extends Error {
-  constructor(timeoutMs: number) {
-    super(`Solana RPC simulation timed out after ${timeoutMs}ms`);
-    this.name = "RpcTimeoutError";
-  }
-}
-
-function defaultSleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function computeBackoffWithJitter(baseDelayMs: number): number {
-  // Add up to 20% positive jitter to prevent thundering herd retries
-  const jitter = Math.floor(
-    Math.random() * Math.max(1, Math.round(baseDelayMs * 0.2)),
-  );
-  return baseDelayMs + jitter;
-}
-
-export function isTransientRpcError(err: unknown): boolean {
-  if (err instanceof RpcTimeoutError) return true;
-  if (!(err instanceof Error)) return false;
-
-  const message = `${err.name} ${err.message}`.toLowerCase();
-  return (
-    message.includes("timeout") ||
-    message.includes("timed out") ||
-    message.includes("fetcherror") ||
-    message.includes("429") ||
-    message.includes("503") ||
-    message.includes("too many requests") ||
-    message.includes("service unavailable") ||
-    message.includes("econnreset") ||
-    message.includes("socket hang up")
-  );
-}
-
-async function simulateWithTimeout(
-  connection: Connection,
-  transaction: Transaction | VersionedTransaction,
-  timeoutMs: number,
-): Promise<SimulatedTransactionResponse> {
-  let timerId: ReturnType<typeof setTimeout> | null = null;
-
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    timerId = setTimeout(() => {
-      reject(new RpcTimeoutError(timeoutMs));
-    }, timeoutMs);
-  });
-
-  const simulationPromise = (async () => {
-    const response =
-      transaction instanceof VersionedTransaction
-        ? await connection.simulateTransaction(transaction)
-        : await connection.simulateTransaction(transaction);
-    return response.value;
-  })();
-
-  try {
-    return await Promise.race([simulationPromise, timeoutPromise]);
-  } finally {
-    if (timerId !== null) {
-      clearTimeout(timerId);
-    }
-  }
-}
-
-export async function simulateEscrowTransaction(
-  transaction: Transaction | VersionedTransaction,
-  options: SimulateEscrowOptions = {},
-): Promise<EscrowSimulationResult> {
-  const timeoutMs = options.timeoutMs ?? DEFAULT_SIMULATION_TIMEOUT_MS;
-  const maxRetries = options.maxRetries ?? 3;
-  const baseDelays = options.baseDelaysMs ?? RETRY_BASE_DELAYS_MS;
-  const sleep = options.sleepFn ?? defaultSleep;
-
-  const primaryUrl =
-    options.primaryRpcUrl ??
-    process.env.NEXT_PUBLIC_SOLANA_RPC_URL ??
-    "https://api.devnet.solana.com";
-  const fallbackUrl =
-    options.fallbackRpcUrl ??
-    process.env.NEXT_PUBLIC_SOLANA_RPC_FALLBACK_URL?.trim();
-
-  const createConnection =
-    options.connectionFactory ??
-    ((endpoint: string) => new Connection(endpoint, "confirmed"));
-
-  const endpoints =
-    fallbackUrl && fallbackUrl !== primaryUrl
-      ? [primaryUrl, fallbackUrl]
-      : [primaryUrl];
-
-  let totalAttempts = 0;
-  let lastError: unknown = null;
-
-  for (const endpoint of endpoints) {
-    const connection = createConnection(endpoint);
-
-    for (let retryIndex = 0; retryIndex <= maxRetries; retryIndex += 1) {
-      totalAttempts += 1;
-      try {
-        const simulation = await simulateWithTimeout(
-          connection,
-          transaction,
-          timeoutMs,
-        );
-
-        if (simulation.err) {
-          return {
-            success: false,
-            error: "RPC_SIMULATION_FAILED",
-            message: `Transaction simulation rejected: ${JSON.stringify(simulation.err)}`,
-            retryable: false,
-            attempts: totalAttempts,
-          };
-        }
-
-        return {
-          success: true,
-          simulation,
-          rpcEndpoint: endpoint,
-          attempts: totalAttempts,
-        };
-      } catch (err: unknown) {
-        lastError = err;
-
-        if (!isTransientRpcError(err)) {
-          return {
-            success: false,
-            error: "RPC_SIMULATION_FAILED",
-            message:
-              err instanceof Error ? err.message : "Solana simulation error",
-            retryable: false,
-            attempts: totalAttempts,
-          };
-        }
-
-        if (retryIndex < maxRetries) {
-          const baseDelay =
-            baseDelays[Math.min(retryIndex, baseDelays.length - 1)];
-          await sleep(computeBackoffWithJitter(baseDelay));
-        }
-      }
-    }
-  }
-
-  const timedOut = isTransientRpcError(lastError);
-  return {
-    success: false,
-    error: timedOut ? "RPC_SIMULATION_TIMEOUT" : "RPC_SIMULATION_FAILED",
-    message:
-      lastError instanceof Error
-        ? lastError.message
-        : "Solana RPC simulation timed out across available nodes",
-    retryable: timedOut,
-    attempts: totalAttempts,
-  };
-}
-
+  Keypair,
   PublicKey,
   SystemProgram,
   Transaction,
@@ -637,33 +441,338 @@ export interface ReconcileOptions {
   retryIntervalMs?: number;
 }
 
+export type EscrowConsensusState =
+  "PENDING_CONSENSUS" | "FINALIZED" | "ROLLED_BACK" | "QUORUM_FAILED";
+
+export interface QuorumNodeTelemetry {
+  endpoint: string;
+  latencyMs: number;
+  ok: boolean;
+  slot?: number;
+  error?: string;
+}
+
+export interface QuorumTelemetryRecord {
+  signature?: string;
+  quorumTarget: number;
+  totalNodes: number;
+  achievedConfirmations: number;
+  quorumLatencyMs: number;
+  nodes: QuorumNodeTelemetry[];
+  timestamp: number;
+}
+
+export interface EscrowQuorumSimulationOptions {
+  endpoints?: string[];
+  connections?: Connection[];
+  signature?: string;
+  quorumSize?: number;
+  pollIntervalMs?: number;
+  maxPollAttempts?: number;
+  onRollback?: (signature: string, reason: string) => Promise<void> | void;
+  onTelemetry?: (record: QuorumTelemetryRecord) => void;
+}
+
+export interface EscrowQuorumSimulationResult extends SimulationResult {
+  state: EscrowConsensusState;
+  signature?: string;
+  optimisticSlot: number;
+  quorumReached: boolean;
+  telemetry: QuorumTelemetryRecord;
+  commitmentPromise: Promise<{
+    state: "FINALIZED" | "ROLLED_BACK";
+    finalizedSlot: number | null;
+    rolledBack: boolean;
+    rollbackReason?: string;
+    telemetry: QuorumTelemetryRecord;
+  }>;
+}
+
 /**
- * Simulates a signed Solana transaction on RPC nodes before broadcasting.
+ * Simulates a signed Solana transaction across primary and backup RPC endpoints
+ * using 2-of-3 quorum consensus. Returns optimistic PENDING_CONSENSUS immediately
+ * upon first valid quorum simulation while background polling verifies on-chain
+ * slot commitment and rolls back if the signature drops from the leader queue.
  */
 export async function simulateEscrowTransaction(
-  connection: Connection,
+  connectionOrConnections: Connection | Connection[],
   transaction: Transaction | VersionedTransaction,
-): Promise<SimulationResult> {
-  try {
-    const res = await connection.simulateTransaction(transaction as any);
-    if (res.value.err) {
-      return {
-        success: false,
-        logs: res.value.logs || [],
-        error: JSON.stringify(res.value.err),
-      };
+  options: EscrowQuorumSimulationOptions = {},
+): Promise<EscrowQuorumSimulationResult> {
+  const poolConnections: Array<{ endpoint: string; conn: Connection }> = [];
+
+  if (Array.isArray(connectionOrConnections)) {
+    connectionOrConnections.forEach((conn, idx) => {
+      poolConnections.push({
+        endpoint:
+          options.endpoints?.[idx] ??
+          (conn as unknown as { rpcEndpoint?: string }).rpcEndpoint ??
+          `rpc-node-${idx}`,
+        conn,
+      });
+    });
+  } else if (options.connections && options.connections.length > 0) {
+    options.connections.forEach((conn, idx) => {
+      poolConnections.push({
+        endpoint:
+          options.endpoints?.[idx] ??
+          (conn as unknown as { rpcEndpoint?: string }).rpcEndpoint ??
+          `rpc-node-${idx}`,
+        conn,
+      });
+    });
+  } else {
+    poolConnections.push({
+      endpoint:
+        options.endpoints?.[0] ??
+        (connectionOrConnections as unknown as { rpcEndpoint?: string })
+          .rpcEndpoint ??
+        "rpc-primary",
+      conn: connectionOrConnections,
+    });
+    if (options.endpoints && options.endpoints.length > 1) {
+      const pool = getEscrowRpcPool({ endpoints: options.endpoints });
+      for (let i = 1; i < options.endpoints.length; i++) {
+        const ep = options.endpoints[i];
+        const backupConn = await pool
+          .getConnectionForEndpoint(ep)
+          .catch(() => connectionOrConnections);
+        poolConnections.push({ endpoint: ep, conn: backupConn });
+      }
+    }
+  }
+
+  const quorumTarget =
+    options.quorumSize ?? Math.min(2, poolConnections.length);
+  const pollIntervalMs = options.pollIntervalMs ?? 500;
+  const maxPollAttempts = options.maxPollAttempts ?? 8;
+  const signature = options.signature;
+
+  const simStart = performance.now();
+  const simTelemetryNodes: QuorumNodeTelemetry[] = [];
+  const validSims: Array<{ endpoint: string; slot: number; logs: string[] }> =
+    [];
+
+  await Promise.all(
+    poolConnections.map(async ({ endpoint, conn }) => {
+      const nodeStart = performance.now();
+      try {
+        const res = await conn.simulateTransaction(transaction as any);
+        const latencyMs =
+          Math.round((performance.now() - nodeStart) * 100) / 100;
+        const slot =
+          (res.value as unknown as { slot?: number })?.slot ??
+          (res as unknown as { context?: { slot?: number } }).context?.slot ??
+          0;
+        if (res.value?.err) {
+          const errStr = JSON.stringify(res.value.err);
+          simTelemetryNodes.push({
+            endpoint,
+            latencyMs,
+            ok: false,
+            slot,
+            error: errStr,
+          });
+        } else {
+          simTelemetryNodes.push({ endpoint, latencyMs, ok: true, slot });
+          validSims.push({ endpoint, slot, logs: res.value?.logs || [] });
+        }
+      } catch (err: unknown) {
+        const latencyMs =
+          Math.round((performance.now() - nodeStart) * 100) / 100;
+        const msg = err instanceof Error ? err.message : "Simulation failed";
+        simTelemetryNodes.push({ endpoint, latencyMs, ok: false, error: msg });
+      }
+    }),
+  );
+
+  const simTelemetry: QuorumTelemetryRecord = {
+    signature,
+    quorumTarget,
+    totalNodes: poolConnections.length,
+    achievedConfirmations: validSims.length,
+    quorumLatencyMs: Math.round((performance.now() - simStart) * 100) / 100,
+    nodes: simTelemetryNodes,
+    timestamp: Date.now(),
+  };
+
+  console.info("[solana-escrow] Simulation quorum telemetry", simTelemetry);
+  options.onTelemetry?.(simTelemetry);
+
+  if (validSims.length < quorumTarget) {
+    const firstErr =
+      simTelemetryNodes.find((n) => !n.ok)?.error ??
+      `Simulation quorum failed (${validSims.length}/${quorumTarget})`;
+    if (signature) {
+      await options.onRollback?.(signature, firstErr);
     }
     return {
-      success: true,
-      logs: res.value.logs || [],
-    };
-  } catch (err: any) {
-    return {
       success: false,
+      state: "QUORUM_FAILED",
+      signature,
+      optimisticSlot: 0,
+      quorumReached: false,
       logs: [],
-      error: err.message || "RPC Simulation failed",
+      error: firstErr,
+      telemetry: simTelemetry,
+      commitmentPromise: Promise.resolve({
+        state: "ROLLED_BACK",
+        finalizedSlot: null,
+        rolledBack: true,
+        rollbackReason: firstErr,
+        telemetry: simTelemetry,
+      }),
     };
   }
+
+  const optimisticSlot = Math.max(0, ...validSims.map((s) => s.slot));
+  const mergedLogs = validSims[0]?.logs ?? [];
+
+  const commitmentPromise = (async () => {
+    if (!signature) {
+      return {
+        state: "FINALIZED" as const,
+        finalizedSlot: optimisticSlot,
+        rolledBack: false,
+        telemetry: simTelemetry,
+      };
+    }
+
+    let seenInLeaderQueue = false;
+    let consecutiveMissing = 0;
+    let latestTelemetry = simTelemetry;
+
+    for (let attempt = 0; attempt < maxPollAttempts; attempt++) {
+      if (attempt > 0 && pollIntervalMs > 0) {
+        await new Promise((r) => setTimeout(r, pollIntervalMs));
+      }
+
+      const pollStart = performance.now();
+      const pollNodes: QuorumNodeTelemetry[] = [];
+      const activeStatuses: Array<{
+        slot: number;
+        confirmationStatus: string | null;
+      }> = [];
+
+      await Promise.all(
+        poolConnections.map(async ({ endpoint, conn }) => {
+          const nodeStart = performance.now();
+          try {
+            const statusRes = await conn.getSignatureStatuses([signature], {
+              searchTransactionHistory: true,
+            });
+            const latencyMs =
+              Math.round((performance.now() - nodeStart) * 100) / 100;
+            const entry = statusRes?.value?.[0] ?? null;
+            if (!entry || entry.err) {
+              pollNodes.push({
+                endpoint,
+                latencyMs,
+                ok: false,
+                error: entry?.err
+                  ? JSON.stringify(entry.err)
+                  : "Signature not in leader queue",
+              });
+            } else {
+              pollNodes.push({
+                endpoint,
+                latencyMs,
+                ok: true,
+                slot: entry.slot,
+              });
+              activeStatuses.push({
+                slot: entry.slot,
+                confirmationStatus: entry.confirmationStatus ?? null,
+              });
+            }
+          } catch (err: unknown) {
+            const latencyMs =
+              Math.round((performance.now() - nodeStart) * 100) / 100;
+            pollNodes.push({
+              endpoint,
+              latencyMs,
+              ok: false,
+              error: err instanceof Error ? err.message : "Status poll failed",
+            });
+          }
+        }),
+      );
+
+      latestTelemetry = {
+        signature,
+        quorumTarget,
+        totalNodes: poolConnections.length,
+        achievedConfirmations: activeStatuses.length,
+        quorumLatencyMs:
+          Math.round((performance.now() - pollStart) * 100) / 100,
+        nodes: pollNodes,
+        timestamp: Date.now(),
+      };
+      console.info(
+        "[solana-escrow] Commitment quorum telemetry",
+        latestTelemetry,
+      );
+      options.onTelemetry?.(latestTelemetry);
+
+      if (activeStatuses.length >= quorumTarget) {
+        seenInLeaderQueue = true;
+        consecutiveMissing = 0;
+
+        const finalizedCount = activeStatuses.filter(
+          (s) => s.confirmationStatus === "finalized",
+        ).length;
+        if (finalizedCount >= quorumTarget) {
+          const finalizedSlot = Math.max(
+            optimisticSlot,
+            ...activeStatuses.map((s) => s.slot ?? 0),
+          );
+          return {
+            state: "FINALIZED" as const,
+            finalizedSlot,
+            rolledBack: false,
+            telemetry: latestTelemetry,
+          };
+        }
+      } else {
+        consecutiveMissing++;
+        if (seenInLeaderQueue || consecutiveMissing >= 2) {
+          const reason = seenInLeaderQueue
+            ? "Transaction signature dropped from leader queue before finalized commitment"
+            : "Transaction signature failed to reach quorum commitment across RPC nodes";
+          await options.onRollback?.(signature, reason);
+          return {
+            state: "ROLLED_BACK" as const,
+            finalizedSlot: null,
+            rolledBack: true,
+            rollbackReason: reason,
+            telemetry: latestTelemetry,
+          };
+        }
+      }
+    }
+
+    const timeoutReason =
+      "Timed out waiting for finalized quorum commitment; rolling back optimistic reservation";
+    await options.onRollback?.(signature, timeoutReason);
+    return {
+      state: "ROLLED_BACK" as const,
+      finalizedSlot: null,
+      rolledBack: true,
+      rollbackReason: timeoutReason,
+      telemetry: latestTelemetry,
+    };
+  })();
+
+  return {
+    success: true,
+    state: "PENDING_CONSENSUS",
+    signature,
+    optimisticSlot,
+    quorumReached: true,
+    logs: mergedLogs,
+    telemetry: simTelemetry,
+    commitmentPromise,
+  };
 }
 
 /**
@@ -727,7 +836,10 @@ const PDA_SEED_PREFIX = "worksphere_escrow";
  * is deployed, setting its ID via NEXT_PUBLIC_ESCROW_PROGRAM_ID will
  * automatically produce matching PDAs.
  */
-export function deriveEscrowPDA(bookingId: string): {
+export function deriveEscrowPDA(
+  bookingId: string,
+  programId: PublicKey = ESCROW_PROGRAM_ID,
+): {
   address: PublicKey;
   bump: number;
 } {
@@ -736,7 +848,7 @@ export function deriveEscrowPDA(bookingId: string): {
   }
   const [address, bump] = PublicKey.findProgramAddressSync(
     [Buffer.from(PDA_SEED_PREFIX), Buffer.from(bookingId)],
-    ESCROW_PROGRAM_ID,
+    programId,
   );
   return { address, bump };
 }
@@ -819,7 +931,7 @@ export function createRefundInstruction(params: {
   programId?: PublicKey;
 }): TransactionInstruction {
   const programId = params.programId ?? ESCROW_PROGRAM_ID;
-  const { address: escrowVault } = deriveEscrowPDA(params.bookingId);
+  const { address: escrowVault } = deriveEscrowPDA(params.bookingId, programId);
 
   const bookingIdBuf = Buffer.from(params.bookingId, "utf8");
   const reasonBuf = Buffer.from(params.reason, "utf8");
@@ -1207,9 +1319,488 @@ export function isEscrowExpired(
   return now > expiryTime;
 }
 
-export function deriveEscrowPda(bookingId: string): [PublicKey, number] {
-  const { address, bump } = deriveEscrowPDA(bookingId);
+export function deriveEscrowPda(
+  bookingId: string,
+  programId?: PublicKey,
+): [PublicKey, number] {
+  const { address, bump } = deriveEscrowPDA(bookingId, programId);
   return [address, bump];
+}
+
+// ===========================================================================
+// Escrow refund submission & on-chain verification (#7740)
+// ===========================================================================
+//
+// The refund cron is the only automated signer of escrow refunds. It must be
+// able to:
+//   1. Build a refund transaction from the non-custodial escrow PDA.
+//   2. Persist the signed signature *before* broadcasting it, so a crash
+//      between broadcast and confirmation can be reconciled later instead of
+//      paying out twice.
+//   3. Poll cluster RPC nodes until the signature is confirmed/finalized, and
+//      treat on-chain failures distinctly from still-pending transactions.
+
+const BASE58_ALPHABET =
+  "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+
+/** Encodes raw bytes as base58 without pulling in an extra dependency. */
+export function encodeBase58(bytes: Uint8Array): string {
+  if (bytes.length === 0) return "";
+
+  let leadingZeros = 0;
+  while (leadingZeros < bytes.length && bytes[leadingZeros] === 0) {
+    leadingZeros += 1;
+  }
+
+  const digits: number[] = [];
+  for (let i = leadingZeros; i < bytes.length; i += 1) {
+    let carry = bytes[i];
+    for (let j = 0; j < digits.length; j += 1) {
+      carry += digits[j] << 8;
+      digits[j] = carry % 58;
+      carry = Math.floor(carry / 58);
+    }
+    while (carry > 0) {
+      digits.push(carry % 58);
+      carry = Math.floor(carry / 58);
+    }
+  }
+
+  let encoded = "1".repeat(leadingZeros);
+  for (let i = digits.length - 1; i >= 0; i -= 1) {
+    encoded += BASE58_ALPHABET[digits[i]];
+  }
+  return encoded;
+}
+
+/** Decodes a base58 string into raw bytes; throws on invalid characters. */
+export function decodeBase58(value: string): Uint8Array {
+  if (typeof value !== "string") {
+    throw new TypeError("Base58 value must be a string");
+  }
+  if (value.length === 0) return new Uint8Array(0);
+
+  let leadingZeros = 0;
+  while (leadingZeros < value.length && value[leadingZeros] === "1") {
+    leadingZeros += 1;
+  }
+
+  const bytes: number[] = [];
+  for (let i = leadingZeros; i < value.length; i += 1) {
+    const digit = BASE58_ALPHABET.indexOf(value[i]);
+    if (digit < 0) {
+      throw new Error(
+        `Invalid base58 character "${value[i]}" at position ${i}`,
+      );
+    }
+    let carry = digit;
+    for (let j = 0; j < bytes.length; j += 1) {
+      carry += bytes[j] * 58;
+      bytes[j] = carry & 0xff;
+      carry >>= 8;
+    }
+    while (carry > 0) {
+      bytes.push(carry & 0xff);
+      carry >>= 8;
+    }
+  }
+
+  const decoded = new Uint8Array(leadingZeros + bytes.length);
+  for (let i = 0; i < bytes.length; i += 1) {
+    decoded[decoded.length - 1 - i] = bytes[i];
+  }
+  return decoded;
+}
+
+/**
+ * Parses the escrow authority secret key from either a base58 string or the
+ * JSON 64-byte array format printed by `solana-keygen`.
+ */
+export function parseEscrowAuthoritySecretKey(source: string): Keypair {
+  if (typeof source !== "string" || source.trim().length === 0) {
+    throw new Error("SOLANA_ESCROW_AUTHORITY_SECRET_KEY is empty");
+  }
+  const trimmed = source.trim();
+
+  try {
+    let secretKey: Uint8Array;
+    if (trimmed.startsWith("[")) {
+      const parsed: unknown = JSON.parse(trimmed);
+      if (!Array.isArray(parsed) || parsed.length !== 64) {
+        throw new Error("expected a JSON array of 64 bytes");
+      }
+      secretKey = Uint8Array.from(
+        parsed.map((entry) => {
+          if (
+            typeof entry !== "number" ||
+            !Number.isInteger(entry) ||
+            entry < 0 ||
+            entry > 255
+          ) {
+            throw new Error("secret key array entries must be bytes (0-255)");
+          }
+          return entry;
+        }),
+      );
+    } else {
+      secretKey = decodeBase58(trimmed);
+      if (secretKey.length !== 64) {
+        throw new Error(
+          `expected 64 decoded bytes, received ${secretKey.length}`,
+        );
+      }
+    }
+    return Keypair.fromSecretKey(secretKey);
+  } catch (error) {
+    throw new Error(
+      `SOLANA_ESCROW_AUTHORITY_SECRET_KEY is invalid: ${toEscrowErrorMessage(error)}`,
+    );
+  }
+}
+
+/** Resolves the escrow authority keypair from env or an explicit override. */
+export function resolveEscrowAuthorityKeypair(
+  source: string | undefined = process.env.SOLANA_ESCROW_AUTHORITY_SECRET_KEY,
+): Keypair {
+  if (!source || source.trim().length === 0) {
+    throw new Error(
+      "SOLANA_ESCROW_AUTHORITY_SECRET_KEY is not configured; the escrow refund cron cannot sign refund transactions",
+    );
+  }
+  return parseEscrowAuthoritySecretKey(source);
+}
+
+export type EscrowRefundSubmissionPhase =
+  "preflight" | "broadcast" | "confirmation";
+
+export interface EscrowRefundSubmissionErrorOptions {
+  /** Signature, once the transaction has been signed. */
+  signature?: string;
+  originalError?: unknown;
+}
+
+/**
+ * Phase-tagged refund submission failure. Callers may only safely return an
+ * escrow to `PENDING` when the failure happened during preflight, i.e. before
+ * any signed transaction could have reached the cluster.
+ */
+export class EscrowRefundSubmissionError extends Error {
+  public readonly phase: EscrowRefundSubmissionPhase;
+  public readonly signature?: string;
+  public readonly originalError?: unknown;
+
+  constructor(
+    phase: EscrowRefundSubmissionPhase,
+    message: string,
+    options: EscrowRefundSubmissionErrorOptions = {},
+  ) {
+    super(message);
+    this.name = "EscrowRefundSubmissionError";
+    this.phase = phase;
+    this.signature = options.signature;
+    this.originalError = options.originalError;
+  }
+}
+
+export interface SubmitEscrowRefundParams {
+  bookingId: string;
+  /** Wallet that deposited into the escrow PDA and receives the refund. */
+  depositorWallet: string;
+  /** Cluster authority keypair that signs the refund transaction. */
+  authority: Keypair;
+  reason?: string;
+  /** Unix timestamp (seconds) recorded in the refund instruction. */
+  closureTimestamp?: number;
+  /** Defaults to NEXT_PUBLIC_ESCROW_PROGRAM_ID at call time. */
+  programId?: string;
+  /** Defaults to the shared escrow RPC pool. */
+  pool?: EscrowRpcConnectionPool;
+  /**
+   * Invoked with the signed signature before the transaction is broadcast.
+   * The cron uses this to persist the signature, making retries reconcilable.
+   */
+  onSigned?: (signature: string) => Promise<void> | void;
+  confirmationTimeoutMs?: number;
+  pollIntervalMs?: number;
+  sleep?: (ms: number) => Promise<void>;
+}
+
+export interface EscrowRefundSubmissionResult {
+  signature: string;
+  escrowVault: string;
+  slot?: number;
+}
+
+/**
+ * Signs and submits an escrow refund transaction, then polls the RPC pool
+ * until the signature is confirmed or finalized.
+ *
+ * Ordering is deliberate: the transaction is signed locally, `onSigned` runs
+ * before `sendRawTransaction`, and confirmation is checked through
+ * `getSignatureStatuses` (rather than `confirmTransaction`, whose long-lived
+ * websocket subscription does not fit the pool's request timeout).
+ */
+export async function submitEscrowRefundTransaction(
+  params: SubmitEscrowRefundParams,
+): Promise<EscrowRefundSubmissionResult> {
+  const preflightError = (message: string, originalError?: unknown) =>
+    new EscrowRefundSubmissionError("preflight", message, { originalError });
+
+  const bookingId =
+    typeof params.bookingId === "string" ? params.bookingId.trim() : "";
+  if (!bookingId) {
+    throw preflightError("bookingId is required to submit an escrow refund");
+  }
+
+  let depositor: PublicKey;
+  try {
+    depositor = new PublicKey(params.depositorWallet);
+  } catch {
+    throw preflightError(
+      `depositorWallet "${params.depositorWallet}" is not a valid Solana address`,
+    );
+  }
+
+  if (
+    !params.authority ||
+    !params.authority.publicKey ||
+    !params.authority.secretKey
+  ) {
+    throw preflightError(
+      "An escrow authority keypair is required to sign refund transactions",
+    );
+  }
+
+  const configuredProgramId =
+    params.programId ?? process.env.NEXT_PUBLIC_ESCROW_PROGRAM_ID;
+  if (!configuredProgramId) {
+    throw preflightError(
+      "NEXT_PUBLIC_ESCROW_PROGRAM_ID is not configured; escrow refunds cannot be submitted",
+    );
+  }
+  let programId: PublicKey;
+  try {
+    programId = new PublicKey(configuredProgramId);
+  } catch {
+    throw preflightError(
+      `NEXT_PUBLIC_ESCROW_PROGRAM_ID "${configuredProgramId}" is not a valid Solana program address`,
+    );
+  }
+  if (isPlaceholderProgramId(programId)) {
+    throw preflightError(
+      "Escrow refunds require a deployed on-chain escrow program. Set NEXT_PUBLIC_ESCROW_PROGRAM_ID to a valid program address.",
+    );
+  }
+
+  const pool = params.pool ?? getEscrowRpcPool();
+  const authority = params.authority;
+  const closureTimestamp =
+    params.closureTimestamp ?? Math.floor(Date.now() / 1000);
+  const reason = params.reason ?? "Escrow hold expired";
+
+  let transaction: Transaction;
+  let signature: string;
+  let escrowVault: string;
+  try {
+    const { blockhash } = await pool.execute((connection) =>
+      connection.getLatestBlockhash("confirmed"),
+    );
+    const { address } = deriveEscrowPDA(bookingId, programId);
+    escrowVault = address.toBase58();
+
+    const instruction = createRefundInstruction({
+      bookingId,
+      reason,
+      closureTimestamp,
+      depositorWallet: depositor,
+      authorityWallet: authority.publicKey,
+      programId,
+    });
+
+    transaction = new Transaction({
+      recentBlockhash: blockhash,
+      feePayer: authority.publicKey,
+    });
+    transaction.add(instruction);
+    transaction.sign(authority);
+
+    if (!transaction.signature) {
+      throw new Error("transaction signing produced no signature");
+    }
+    signature = encodeBase58(new Uint8Array(transaction.signature));
+  } catch (error) {
+    if (error instanceof EscrowRefundSubmissionError) throw error;
+    throw preflightError(
+      `Failed to prepare the escrow refund transaction: ${toEscrowErrorMessage(error)}`,
+      error,
+    );
+  }
+
+  if (params.onSigned) {
+    try {
+      await params.onSigned(signature);
+    } catch (error) {
+      throw new EscrowRefundSubmissionError(
+        "preflight",
+        `Failed to persist the refund signature before broadcast: ${toEscrowErrorMessage(error)}`,
+        { signature, originalError: error },
+      );
+    }
+  }
+
+  try {
+    await pool.execute((connection) =>
+      connection.sendRawTransaction(transaction.serialize(), {
+        skipPreflight: false,
+        preflightCommitment: "confirmed",
+        maxRetries: 3,
+      }),
+    );
+  } catch (error) {
+    throw new EscrowRefundSubmissionError(
+      "broadcast",
+      `Failed to broadcast escrow refund transaction ${signature}: ${toEscrowErrorMessage(error)}`,
+      { signature, originalError: error },
+    );
+  }
+
+  const pollIntervalMs =
+    typeof params.pollIntervalMs === "number" && params.pollIntervalMs > 0
+      ? params.pollIntervalMs
+      : ESCROW_POLL_INTERVAL_MS;
+  const confirmationTimeoutMs =
+    typeof params.confirmationTimeoutMs === "number" &&
+    params.confirmationTimeoutMs >= 0
+      ? params.confirmationTimeoutMs
+      : ESCROW_CONFIRMATION_TIMEOUT_MS;
+  const sleep =
+    params.sleep ??
+    ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  const maxAttempts = Math.max(
+    1,
+    Math.ceil(confirmationTimeoutMs / pollIntervalMs),
+  );
+
+  let lastRpcError: string | null = null;
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    try {
+      const statuses = await pool.execute((connection) =>
+        connection.getSignatureStatuses([signature], {
+          searchTransactionHistory: true,
+        }),
+      );
+      const status = statuses?.value?.[0] ?? null;
+
+      if (status) {
+        if (status.err) {
+          throw new EscrowRefundSubmissionError(
+            "confirmation",
+            `Escrow refund transaction ${signature} failed on-chain: ${JSON.stringify(status.err)}`,
+            { signature },
+          );
+        }
+        if (
+          status.confirmationStatus === "confirmed" ||
+          status.confirmationStatus === "finalized" ||
+          status.confirmations === null
+        ) {
+          return { signature, escrowVault, slot: status.slot };
+        }
+      }
+    } catch (error) {
+      if (error instanceof EscrowRefundSubmissionError) throw error;
+      lastRpcError = toEscrowErrorMessage(error);
+    }
+
+    if (attempt + 1 < maxAttempts) {
+      await sleep(pollIntervalMs);
+    }
+  }
+
+  throw new EscrowRefundSubmissionError(
+    "confirmation",
+    `Escrow refund transaction ${signature} was not confirmed within ${confirmationTimeoutMs}ms` +
+      (lastRpcError ? ` (last RPC error: ${lastRpcError})` : ""),
+    { signature },
+  );
+}
+
+export type EscrowRefundVerificationStatus =
+  "confirmed" | "failed" | "pending" | "unknown";
+
+export interface EscrowRefundVerification {
+  status: EscrowRefundVerificationStatus;
+  signature: string;
+  slot?: number | null;
+  confirmationStatus?: string | null;
+  error?: string;
+}
+
+/**
+ * Verifies a previously broadcast refund signature against the RPC quorum.
+ * `unknown` means the cluster has not observed the signature yet (or every
+ * endpoint errored), which callers must treat as "still in flight" rather than
+ * as a failure, so the escrow is never returned to the refundable state.
+ */
+export async function verifyEscrowRefundTransaction(params: {
+  signature: string;
+  pool?: EscrowRpcConnectionPool;
+}): Promise<EscrowRefundVerification> {
+  const signature =
+    typeof params.signature === "string" ? params.signature.trim() : "";
+  if (!signature) {
+    return {
+      status: "unknown",
+      signature: "",
+      error: "Transaction signature is required",
+    };
+  }
+
+  const pool = params.pool ?? getEscrowRpcPool();
+  try {
+    const statuses = await pool.execute((connection) =>
+      connection.getSignatureStatuses([signature], {
+        searchTransactionHistory: true,
+      }),
+    );
+    const status = statuses?.value?.[0] ?? null;
+
+    if (!status) {
+      return { status: "unknown", signature };
+    }
+    if (status.err) {
+      return {
+        status: "failed",
+        signature,
+        slot: status.slot,
+        error: JSON.stringify(status.err),
+      };
+    }
+    if (
+      status.confirmationStatus === "confirmed" ||
+      status.confirmationStatus === "finalized" ||
+      status.confirmations === null
+    ) {
+      return {
+        status: "confirmed",
+        signature,
+        slot: status.slot,
+        confirmationStatus: status.confirmationStatus ?? null,
+      };
+    }
+    return {
+      status: "pending",
+      signature,
+      slot: status.slot,
+      confirmationStatus: status.confirmationStatus ?? null,
+    };
+  } catch (error) {
+    return {
+      status: "unknown",
+      signature,
+      error: toEscrowErrorMessage(error),
+    };
+  }
 }
 
 // ===========================================================================
@@ -1920,4 +2511,3 @@ export function resetEscrowClient(): void {
 }
 
 export * from "./solanaPayEscrow";
- main

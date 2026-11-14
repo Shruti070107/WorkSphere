@@ -365,7 +365,7 @@ export function VenueSeatWaitlistModal({
                   onChange={(e) => setDate(e.target.value)}
                   min={new Date().toISOString().split('T')[0]}
                   required
-                  className="w-full rounded-xl border border-white/10 bg-black/60 px-3.5 py-2.5 text-sm text-white focus:border-violet-500 focus:outline-none transition"
+                  className="w-full rounded-xl border border-white/10 bg-black/60 px-3.5 py-2.5 text-sm text-white focus:border-violet-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-900 transition"
                 />
               </div>
               <div>
@@ -375,7 +375,7 @@ export function VenueSeatWaitlistModal({
                   value={time}
                   onChange={(e) => setTime(e.target.value)}
                   required
-                  className="w-full rounded-xl border border-white/10 bg-black/60 px-3.5 py-2.5 text-sm text-white focus:border-violet-500 focus:outline-none transition"
+                  className="w-full rounded-xl border border-white/10 bg-black/60 px-3.5 py-2.5 text-sm text-white focus:border-violet-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-900 transition"
                 />
               </div>
             </div>
@@ -417,11 +417,10 @@ export function VenueSeatWaitlistModal({
                 <button
                   type="button"
                   onClick={() => setRequiresQuiet(!requiresQuiet)}
-                  className={`flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-medium transition ${
-                    requiresQuiet
-                      ? 'border-violet-500 bg-violet-500/20 text-violet-300'
-                      : 'border-white/10 bg-black/40 text-zinc-400 hover:border-white/20'
-                  }`}
+                  className={`flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-medium transition ${requiresQuiet
+                    ? 'border-violet-500 bg-violet-500/20 text-violet-300'
+                    : 'border-white/10 bg-black/40 text-zinc-400 hover:border-white/20'
+                    }`}
                 >
                   <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
@@ -433,11 +432,10 @@ export function VenueSeatWaitlistModal({
                 <button
                   type="button"
                   onClick={() => setRequiresOutlets(!requiresOutlets)}
-                  className={`flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-medium transition ${
-                    requiresOutlets
-                      ? 'border-cyan-500 bg-cyan-500/20 text-cyan-300'
-                      : 'border-white/10 bg-black/40 text-zinc-400 hover:border-white/20'
-                  }`}
+                  className={`flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-medium transition ${requiresOutlets
+                    ? 'border-cyan-500 bg-cyan-500/20 text-cyan-300'
+                    : 'border-white/10 bg-black/40 text-zinc-400 hover:border-white/20'
+                    }`}
                 >
                   <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
